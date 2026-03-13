@@ -1,8 +1,6 @@
-# DAVID AI Outreach Agent
+# AI Outreach Automation — Sales Prospecting Tool
 
-An AI-powered outreach agent that automates prospecting by scraping a prospect's website, analyzing their business needs and pain points, drafting a personalized outreach email, and sending it via Gmail — all in one end-to-end pipeline.
-
-Built as a Round 2 interview project for [DAVID AI](https://getdavid.ai/).
+An AI-powered outreach pipeline that scrapes prospect websites, analyzes business needs, and drafts personalized cold emails — with CRM-style logging and batch processing for multiple prospects.
 
 ---
 
@@ -125,7 +123,7 @@ All 69 tests should pass. Tests use mocks — no API keys or network needed.
 - Rate-limited (1s between requests) with a max of 8 pages per site
 
 ### Phase 2: Need Analysis (`src/analyzer.py`)
-- Sends scraped content to Claude with a system prompt positioning the LLM as a senior business development analyst at DAVID AI
+- Sends scraped content to Claude with a structured system prompt for business development analysis
 - Produces structured JSON: company summary, industry, services, pain points, AI opportunities, value proposition, and recommended outreach angle
 - All insights are grounded in evidence from the scraped content
 - Includes retry logic with exponential backoff for API rate limits
