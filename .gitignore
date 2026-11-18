@@ -27,6 +27,3 @@ logs/
 
 # Claude Code local settings
 .claude/
-
-# Interview instructions (not part of deliverable)
-Instructions/

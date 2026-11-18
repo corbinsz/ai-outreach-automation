@@ -1,8 +1,20 @@
 """Pydantic models for structured data throughout the pipeline."""
 
+import os
 from pydantic import BaseModel, Field
 from typing import Optional
 from datetime import datetime
+
+# Neutral fallback when SENDER_NAME is unset and the caller passes no name.
+DEFAULT_SENDER_NAME = "Your Name"
+
+
+def resolve_sender_name(sender_name: Optional[str] = None) -> str:
+    """Use an explicit name, then SENDER_NAME, then a neutral default."""
+    if sender_name and sender_name.strip():
+        return sender_name.strip()
+    configured = os.getenv("SENDER_NAME", "").strip()
+    return configured or DEFAULT_SENDER_NAME
 
 
 class ScrapedPage(BaseModel):

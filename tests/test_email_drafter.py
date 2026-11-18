@@ -10,7 +10,7 @@ from src.models import NeedAnalysis, EmailDraft
 
 VALID_DRAFT_JSON = json.dumps({
     "subject": "Quick question about your QA process",
-    "body": "Hi there,\n\nI noticed Acme's focus on precision manufacturing...\n\nBest,\nThe DAVID AI Team",
+    "body": "Hi there,\n\nI noticed Acme's focus on precision manufacturing...\n\nBest,\nJane Smith",
 })
 
 
@@ -76,11 +76,23 @@ class TestDraftEmail:
         client.messages.create.return_value = _mock_claude_response(VALID_DRAFT_JSON)
         mock_client_cls.return_value = client
 
-        draft_email(_make_analysis(), api_key="test-key", sender_name="Jane from DAVID AI")
+        draft_email(_make_analysis(), api_key="test-key", sender_name="Jane Smith")
 
         call_kwargs = client.messages.create.call_args
         user_msg = call_kwargs.kwargs["messages"][0]["content"]
-        assert "Jane from DAVID AI" in user_msg
+        assert "Jane Smith" in user_msg
+
+    @patch("src.email_drafter.anthropic.Anthropic")
+    def test_sender_name_defaults_from_env(self, mock_client_cls, monkeypatch):
+        monkeypatch.setenv("SENDER_NAME", "Casey Lee")
+        client = MagicMock()
+        client.messages.create.return_value = _mock_claude_response(VALID_DRAFT_JSON)
+        mock_client_cls.return_value = client
+
+        draft_email(_make_analysis(), api_key="test-key")
+
+        user_msg = client.messages.create.call_args.kwargs["messages"][0]["content"]
+        assert "Casey Lee" in user_msg
 
     @patch("src.email_drafter.anthropic.Anthropic")
     def test_invalid_json_raises(self, mock_client_cls):
@@ -122,6 +134,7 @@ class TestToneDescriptions:
             assert tone in TONE_DESCRIPTIONS
             assert len(TONE_DESCRIPTIONS[tone]) > 10
 
-    def test_system_prompt_mentions_david_ai(self):
-        assert "DAVID AI" in EMAIL_SYSTEM_PROMPT
-        assert "200 words" in EMAIL_SYSTEM_PROMPT or "concise" in EMAIL_SYSTEM_PROMPT.lower()
+    def test_system_prompt_sets_email_constraints(self):
+        lowered = EMAIL_SYSTEM_PROMPT.lower()
+        assert "200 words" in EMAIL_SYSTEM_PROMPT or "concise" in lowered
+        assert "sender" in lowered

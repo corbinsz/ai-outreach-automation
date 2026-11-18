@@ -1,7 +1,7 @@
 """
-DAVID AI Outreach Agent - Streamlit UI
-AI-powered prospecting tool that scrapes websites, analyzes business needs,
-drafts personalized outreach emails, and sends them via Gmail.
+AI Outreach - Streamlit UI
+Scrapes a prospect website, analyzes the business, drafts a personalized
+email, and can send it through the user's own Gmail account.
 """
 
 import os
@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 
 from src.agent import OutreachAgent, AgentConfig, PipelineResult
 from src.gmail_sender import get_outreach_log, update_outreach_record
-from src.models import EmailDraft
+from src.models import EmailDraft, resolve_sender_name
 
 load_dotenv()
 
@@ -24,8 +24,8 @@ def esc(text: str) -> str:
 
 # --- Page Config ---
 st.set_page_config(
-    page_title="DAVID AI Outreach Agent",
-    page_icon="D",
+    page_title="AI Outreach",
+    page_icon="✉️",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -606,7 +606,7 @@ def init_session_state():
         "api_key": os.getenv("ANTHROPIC_API_KEY", ""),
         "gmail_addr": os.getenv("GMAIL_ADDRESS", ""),
         "gmail_pass": os.getenv("GMAIL_APP_PASSWORD", ""),
-        "sender_name": os.getenv("SENDER_NAME", "The DAVID AI Team"),
+        "sender_name": resolve_sender_name(),
         "tone": "professional",
     }
     for key, val in defaults.items():
@@ -620,7 +620,7 @@ def get_agent_config() -> AgentConfig:
         anthropic_api_key=st.session_state.get("api_key", ""),
         gmail_address=st.session_state.get("gmail_addr", ""),
         gmail_app_password=st.session_state.get("gmail_pass", ""),
-        sender_name=st.session_state.get("sender_name", "The DAVID AI Team"),
+        sender_name=resolve_sender_name(st.session_state.get("sender_name")),
         tone=st.session_state.get("tone", "professional"),
         llm_model="claude-sonnet-4-5-20250929",
         use_playwright=True,
@@ -630,13 +630,13 @@ def get_agent_config() -> AgentConfig:
 def render_sidebar():
     """Render the configuration sidebar."""
     with st.sidebar:
-        # Branded logo block
+        # Sidebar title
         st.markdown(
             '<div class="sidebar-logo-block">'
-            '<div class="sidebar-logo-mark">D</div>'
+            '<div class="sidebar-logo-mark">A</div>'
             '<div>'
-            '<div class="sidebar-logo-text">DAVID AI</div>'
-            '<div class="sidebar-logo-sub">Outreach Agent</div>'
+            '<div class="sidebar-logo-text">AI Outreach</div>'
+            '<div class="sidebar-logo-sub">Prospecting tool</div>'
             '</div>'
             '</div>',
             unsafe_allow_html=True,
@@ -670,7 +670,7 @@ def render_sidebar():
         st.text_input(
             "Sender Name",
             key="sender_name",
-            help="The display name recipients will see (e.g. 'John from DAVID AI').",
+            help="The name recipients see on the From line. Set SENDER_NAME in .env to prefill this (for example, Jane Smith).",
         )
 
         st.markdown("---")
@@ -687,9 +687,8 @@ def render_sidebar():
         st.markdown("---")
         st.markdown(
             '<div class="sidebar-footer">'
-            'Powered by Claude<br>'
-            '<a href="https://getdavid.ai" target="_blank">getdavid.ai</a>'
-            ' &mdash; Scale Intelligence. Tenfold.'
+            'Analysis runs on Claude.<br>'
+            'Sending uses your own Gmail app password.'
             '</div>',
             unsafe_allow_html=True,
         )
@@ -1300,13 +1299,13 @@ def main():
     init_session_state()
     render_sidebar()
 
-    # Branded header
+    # Page header
     st.markdown(
         '<div class="branded-header">'
-        '<div class="brand-logo-mark">D</div>'
+        '<div class="brand-logo-mark">A</div>'
         '<div>'
-        '<p class="brand-title">DAVID AI Outreach Agent</p>'
-        '<p class="brand-subtitle">Scale Intelligence. Tenfold.</p>'
+        '<p class="brand-title">AI Outreach</p>'
+        '<p class="brand-subtitle">Research a company, draft the email, send it yourself.</p>'
         '</div>'
         '</div>'
         '<div class="accent-divider"></div>',
@@ -1330,7 +1329,7 @@ def main():
 | Step | What Happens |
 |------|-------------|
 | **1. Web Scraping** | Fetches the prospect's website (homepage + key pages like About, Services, Blog) and extracts clean text content. |
-| **2. Need Analysis** | Sends the scraped content to Claude, which identifies the company's industry, pain points, and specific opportunities where DAVID AI could help. |
+| **2. Need Analysis** | Sends the scraped content to Claude, which identifies the company's industry, pain points, and specific places where data, automation, or operations work could help. |
 | **3. Email Drafting** | Claude writes a personalized cold outreach email that references real details from the prospect's website — not a generic template. |
 | **4. Review & Send** | You review the draft, edit it if needed, and send it via Gmail SMTP. Nothing sends without your confirmation. |
 

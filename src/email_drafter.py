@@ -11,7 +11,7 @@ import time
 
 import anthropic
 
-from src.models import NeedAnalysis, EmailDraft
+from src.models import NeedAnalysis, EmailDraft, resolve_sender_name
 
 logger = logging.getLogger(__name__)
 
@@ -22,23 +22,17 @@ TONE_DESCRIPTIONS = {
     "consultative": "Thoughtful and consultative. Lead with insights and questions. Position as a strategic advisor.",
 }
 
-EMAIL_SYSTEM_PROMPT = """You are an expert cold email copywriter for DAVID AI, \
-a company that provides world-class AI engineering services to help businesses \
-scale intelligence tenfold.
+EMAIL_SYSTEM_PROMPT = """You are an expert cold email copywriter. You write one outreach email for the sender named in the request.
 
 You write outreach emails that:
-- Feel personally written, NOT templated or mass-produced
-- Reference specific details from the prospect's website to prove research was done
-- Lead with value and insight, not a sales pitch
-- Are concise (under 200 words for the body)
+- Feel personally written, not templated or mass-produced
+- Reference specific details from the prospect's website to show the research
+- Lead with an observation or insight, not a sales pitch
+- Stay concise (under 200 words for the body)
 - Have a single, clear call to action
-- Use a subject line that's intriguing but not clickbait (under 60 chars)
+- Use a subject line that is specific but not clickbait (under 60 characters)
 
-DAVID AI's key selling points:
-- World-class AI engineering embedded directly into client workflows
-- Custom AI solutions (not off-the-shelf tools)
-- Proven ability to accelerate business roadmaps with AI
-- End-to-end: strategy, development, deployment, and iteration"""
+Sign off with the sender name you are given. Do not invent a company, product, or team name."""
 
 EMAIL_USER_PROMPT = """Write a personalized cold outreach email based on this prospect analysis.
 
@@ -63,7 +57,7 @@ Guidelines:
 - NEVER start with "I hope this email finds you well" or similar cliches.
 - NEVER start with "I noticed your company..." — be more creative.
 - DO reference a specific detail from their website (a service, a recent post, their mission, etc.).
-- DO make the connection to AI/DAVID AI feel natural, not forced.
+- DO tie the note to a specific detail on their site so the offer feels like a natural next step.
 - Keep paragraphs short (2-3 sentences max).
 - The CTA should be low-friction (e.g., "Worth a 15-minute chat?" not "Schedule a demo").
 - Return ONLY the JSON object, no markdown formatting or code blocks."""
@@ -72,7 +66,7 @@ Guidelines:
 def draft_email(
     analysis: NeedAnalysis,
     api_key: str,
-    sender_name: str = "The DAVID AI Team",
+    sender_name: str | None = None,
     tone: str = "professional",
     model: str = "claude-sonnet-4-5-20250929",
 ) -> EmailDraft:
@@ -82,13 +76,14 @@ def draft_email(
     Args:
         analysis: The prospect need analysis.
         api_key: Anthropic API key.
-        sender_name: Name to sign the email with.
+        sender_name: Name to sign the email with. Uses SENDER_NAME when omitted.
         tone: Email tone - professional, conversational, bold, or consultative.
         model: Claude model to use.
 
     Returns:
         EmailDraft with subject and body.
     """
+    sender_name = resolve_sender_name(sender_name)
     client = anthropic.Anthropic(api_key=api_key)
 
     tone_desc = TONE_DESCRIPTIONS.get(tone, TONE_DESCRIPTIONS["professional"])

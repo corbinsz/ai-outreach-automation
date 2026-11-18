@@ -7,14 +7,20 @@ Supports single URL and batch mode.
 """
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional, Callable
 
 from src.scraper import scrape_website
 from src.analyzer import analyze_prospect
 from src.email_drafter import draft_email
 from src.gmail_sender import send_email
-from src.models import ScrapedWebsite, NeedAnalysis, EmailDraft, OutreachRecord
+from src.models import (
+    ScrapedWebsite,
+    NeedAnalysis,
+    EmailDraft,
+    OutreachRecord,
+    resolve_sender_name,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +31,7 @@ class AgentConfig:
     anthropic_api_key: str
     gmail_address: str = ""
     gmail_app_password: str = ""
-    sender_name: str = "The DAVID AI Team"
+    sender_name: str = field(default_factory=resolve_sender_name)
     tone: str = "professional"
     llm_model: str = "claude-sonnet-4-5-20250929"
     use_playwright: bool = True

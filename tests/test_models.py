@@ -1,7 +1,15 @@
 """Tests for Pydantic data models."""
 
 import pytest
-from src.models import ScrapedPage, ScrapedWebsite, NeedAnalysis, EmailDraft, OutreachRecord
+from src.models import (
+    DEFAULT_SENDER_NAME,
+    ScrapedPage,
+    ScrapedWebsite,
+    NeedAnalysis,
+    EmailDraft,
+    OutreachRecord,
+    resolve_sender_name,
+)
 
 
 class TestScrapedPage:
@@ -159,3 +167,19 @@ class TestOutreachRecord:
         assert record.status == "sent"
         assert record.opened_at is None
         assert record.follow_up_date is None
+
+
+class TestResolveSenderName:
+    def test_explicit_name_wins(self, monkeypatch):
+        monkeypatch.setenv("SENDER_NAME", "From Env")
+        assert resolve_sender_name("Jane Smith") == "Jane Smith"
+
+    def test_falls_back_to_env(self, monkeypatch):
+        monkeypatch.setenv("SENDER_NAME", "From Env")
+        assert resolve_sender_name() == "From Env"
+        assert resolve_sender_name("  ") == "From Env"
+
+    def test_neutral_default(self, monkeypatch):
+        monkeypatch.delenv("SENDER_NAME", raising=False)
+        assert resolve_sender_name() == DEFAULT_SENDER_NAME
+        assert resolve_sender_name("") == "Your Name"

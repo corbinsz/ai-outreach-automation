@@ -1,62 +1,85 @@
-# AI Outreach Automation — Sales Prospecting Tool
+# AI Outreach Automation
 
-An AI-powered outreach pipeline that scrapes prospect websites, analyzes business needs, and drafts personalized cold emails — with CRM-style logging and batch processing for multiple prospects.
+A Python app that turns a company URL into a researched cold email.
+
+Paste a website. The app scrapes a handful of pages, asks Claude for a structured read of the business, and drafts an email in a tone you choose. You review and edit the draft before anything goes out. Sending is a separate step through your own Gmail account, and it only happens after you confirm.
+
+Scraping and drafting need an Anthropic API key. Sending needs your own Gmail address and a Gmail app password — not your normal login password. The app does not send mail any other way.
 
 ---
 
-## Architecture
+## How it works
 
 ```
-URL Input → Web Scraper → LLM Analysis → Email Draft → Review/Confirm → Gmail Send
+URL → scrape → Claude analysis → email draft → you review → Gmail send
 ```
 
-| Component        | Technology                                       |
-|------------------|--------------------------------------------------|
-| Language         | Python 3.10+                                     |
-| Web Scraping     | BeautifulSoup4 + Requests (Playwright fallback)  |
-| LLM              | Anthropic Claude (via `anthropic` SDK)            |
-| Email Sending    | Gmail SMTP with App Password                     |
-| Interface        | Streamlit web UI                                 |
-| Data Models      | Pydantic v2                                      |
-| Testing          | pytest (69 tests across 6 modules)               |
+| Piece | What it uses |
+| --- | --- |
+| Language | Python 3.10+ |
+| Scraping | BeautifulSoup4 + Requests, with a Playwright fallback |
+| Model | Anthropic Claude (`anthropic` SDK) |
+| Sending | Gmail SMTP with an app password |
+| Interface | Streamlit |
+| Models | Pydantic v2 |
+| Tests | pytest suite (mocks only — no API keys or network) |
 
-### Project Structure
+### 1. Web scraping (`src/scraper.py`)
+
+Fetches the homepage and follows internal links that look like About, Services, Blog, and similar pages. Scripts, nav, and footer are stripped. If the first pass comes back thin, it can retry with Playwright. Requests are spaced a second apart, and a site is capped at 8 pages.
+
+### 2. Need analysis (`src/analyzer.py`)
+
+Sends the scraped text to Claude and asks for JSON: company summary, industry, services, pain points, opportunities, a short value note, and one recommended angle. The prompt tells the model to stay tied to the page and not invent a company name for you. Rate limits and transient API errors retry with backoff.
+
+### 3. Email draft (`src/email_drafter.py`)
+
+Writes one cold email from that analysis. It is supposed to mention something specific from the site, stay under 200 words, and end with a low-friction ask. Four tones: **professional**, **conversational**, **bold**, **consultative**. The sign-off uses `SENDER_NAME` (or whatever you type in the sidebar). You can edit the draft or generate another one before sending.
+
+### 4. Gmail send (`src/gmail_sender.py`)
+
+Sends over Gmail SMTP with TLS. You confirm first; nothing sends on its own. Transient SMTP failures retry up to 3 times. Auth failures and rejected recipients do not retry. Each attempt is appended to `logs/outreach_log.json`.
+
+### 5. Follow-ups (`app.py`)
+
+After a send, you can mark a message opened or replied, attach a note, and set a follow-up date. A Follow-Ups tab lists overdue and upcoming items. Tracking is manual. Streamlit does not host a tracking-pixel endpoint, so "opened" means you marked it opened. The log fields are there if a real backend is added later.
+
+The orchestrator in `src/agent.py` runs one URL or a batch. Batch mode stops at the draft for each URL and does not auto-send.
+
+---
+
+## Project structure
 
 ```
-DavidAIProject/
-├── app.py                  # Streamlit UI (main entry point)
+ai-outreach-automation/
+├── app.py                  # Streamlit UI
 ├── src/
-│   ├── scraper.py          # Web scraping: URL → structured content
-│   ├── analyzer.py         # LLM analysis: content → pain points & opportunities
-│   ├── email_drafter.py    # Email generation: analysis → personalized email
-│   ├── gmail_sender.py     # Gmail SMTP: draft → sent email + CRM logging
-│   ├── agent.py            # Pipeline orchestrator (single + batch mode)
-│   └── models.py           # Pydantic data models shared across modules
-├── tests/
-│   ├── test_models.py      # Model validation tests
-│   ├── test_scraper.py     # Scraping, extraction, link discovery tests
-│   ├── test_analyzer.py    # LLM analysis + JSON parsing tests
-│   ├── test_email_drafter.py  # Email drafting + tone tests
-│   ├── test_gmail_sender.py   # SMTP send, retry logic, logging tests
-│   └── test_agent.py       # Pipeline orchestration + batch tests
-├── logs/                   # CRM-style outreach log (generated at runtime)
-├── .streamlit/config.toml  # Streamlit theme configuration
+│   ├── scraper.py          # URL → page text
+│   ├── analyzer.py         # page text → structured analysis
+│   ├── email_drafter.py    # analysis → email draft
+│   ├── gmail_sender.py     # draft → SMTP send + log
+│   ├── agent.py            # pipeline (single URL and batch)
+│   └── models.py           # Pydantic models, sender-name default
+├── tests/                  # pytest suite
+├── logs/                   # outreach log, created at runtime (gitignored)
+├── .streamlit/config.toml
+├── .env.example
 ├── requirements.txt
 └── .gitignore
 ```
 
 ---
 
-## Setup Instructions
+## Setup
 
-### 1. Clone the Repository
+### 1. Clone
 
 ```bash
-git clone https://github.com/corbinsz/DavidAIProject.git
-cd DavidAIProject
+git clone https://github.com/corbinsz/ai-outreach-automation.git
+cd ai-outreach-automation
 ```
 
-### 2. Create a Virtual Environment
+### 2. Virtual environment
 
 ```bash
 python -m venv venv
@@ -68,147 +91,98 @@ venv\Scripts\activate
 source venv/bin/activate
 ```
 
-### 3. Install Dependencies
+### 3. Install
 
 ```bash
 pip install -r requirements.txt
 playwright install chromium
 ```
 
-### 4. Set Up Environment Variables
+Playwright is only needed for the JavaScript fallback. Scraping with `requests` works without it.
 
-Create a `.env` file in the project root:
+### 4. Environment variables
+
+```bash
+cp .env.example .env
+```
+
+Fill in your own keys. Placeholder values in `.env.example` are not real credentials.
 
 ```
-ANTHROPIC_API_KEY=sk-ant-...your-key-here
-GMAIL_ADDRESS=your-email@gmail.com
-GMAIL_APP_PASSWORD=your-16-char-app-password
+ANTHROPIC_API_KEY=your-anthropic-api-key
+GMAIL_ADDRESS=you@gmail.com
+GMAIL_APP_PASSWORD=your-16-character-app-password
 SENDER_NAME=Your Name
 ```
 
-Or skip this step and enter credentials directly in the sidebar UI.
+You can skip the file and type the same values in the sidebar. `SENDER_NAME` is optional. If it is missing, drafts and the From line use `Your Name` until you change it.
 
-#### Getting a Gmail App Password
+Gmail settings are only required when you send. Analysis and drafting work with just the Anthropic key.
 
-1. Go to [Google Account Security](https://myaccount.google.com/security)
-2. Enable **2-Step Verification** if not already enabled
-3. Go to **App passwords** (search "app passwords" in account settings)
-4. Generate a new app password for "Mail"
-5. Copy the 16-character password into your `.env` file
+#### Gmail app password
 
-### 5. Run the App
+Sending uses your own Gmail account. Google will not accept your normal password for SMTP here; you need an app password.
+
+1. Open [Google Account Security](https://myaccount.google.com/security).
+2. Turn on **2-Step Verification** if it is off.
+3. Search account settings for **App passwords**.
+4. Create one for Mail.
+5. Put the 16-character password in `GMAIL_APP_PASSWORD`.
+
+### 5. Run
 
 ```bash
 streamlit run app.py
 ```
 
-The app opens at `http://localhost:8501`.
+Opens at `http://localhost:8501`.
 
-### 6. Run Tests
+### 6. Tests
 
 ```bash
 pytest tests/ -v
 ```
 
-All 69 tests should pass. Tests use mocks — no API keys or network needed.
+The suite mocks Claude and SMTP. It does not call the network or need keys.
 
 ---
 
-## How It Works
+## Environment variables
 
-### Phase 1: Web Scraping (`src/scraper.py`)
-- Fetches the homepage and discovers internal pages (About, Services, Blog, etc.) via keyword matching
-- Cleans raw HTML by stripping scripts, nav, footer, and other non-content elements
-- Falls back to Playwright for JavaScript-rendered sites when content is thin
-- Rate-limited (1s between requests) with a max of 8 pages per site
-
-### Phase 2: Need Analysis (`src/analyzer.py`)
-- Sends scraped content to Claude with a structured system prompt for business development analysis
-- Produces structured JSON: company summary, industry, services, pain points, AI opportunities, value proposition, and recommended outreach angle
-- All insights are grounded in evidence from the scraped content
-- Includes retry logic with exponential backoff for API rate limits
-
-### Phase 3: Email Drafting (`src/email_drafter.py`)
-- Generates a personalized cold outreach email using the analysis
-- References specific details from the prospect's website — not a generic template
-- Supports 4 tone presets: **professional**, **conversational**, **bold**, **consultative**
-- Anti-cliché rules (no "I hope this finds you well"), word limits, low-friction CTA
-- User can review, edit, or regenerate the draft before sending
-
-### Phase 4: Gmail Send (`src/gmail_sender.py`)
-- Sends via Gmail SMTP with TLS encryption
-- Requires explicit confirmation — no accidental sends
-- Smart retry logic: retries transient failures (3 attempts), does NOT retry auth or recipient errors
-- Logs every attempt to `logs/outreach_log.json` with full CRM-style records
-
-### Phase 5: Email Tracking & Follow-Ups (`app.py` + `src/gmail_sender.py`)
-- Manual tracking: mark emails as opened or replied with timestamped status updates
-- Follow-up scheduling: set follow-up dates per email, with overdue/upcoming indicators
-- Follow-Up Dashboard tab: dedicated view showing overdue and upcoming follow-ups with snooze controls
-- Post-send scheduling: after sending an email, optionally set a follow-up date and note
-- Notes field: attach free-text notes to any outreach record
-- Note: tracking is manual (not pixel-based) because Streamlit cannot host a tracking pixel endpoint. This is a practical and honest approach for a demo — the data model supports automated tracking if a backend is added later.
+| Variable | Required | Description |
+| --- | --- | --- |
+| `ANTHROPIC_API_KEY` | Yes | Anthropic API key for Claude |
+| `GMAIL_ADDRESS` | To send | Gmail address the message is sent from |
+| `GMAIL_APP_PASSWORD` | To send | Gmail app password (16 characters), not your login password |
+| `SENDER_NAME` | No | Display name on the From line |
 
 ---
 
-## Features
+## What you can do in the UI
 
-- **End-to-end automation**: URL in → email sent
-- **Streamlit web UI**: Clean, branded interface with light theme
-- **Batch mode**: Process multiple prospect URLs in sequence
-- **CRM-style logging**: Track all outreach attempts with status, timestamps, and error details
-- **Tone customization**: 4 email style presets
-- **Email editing**: Review and modify drafts before sending
-- **Draft regeneration**: Generate alternative email versions on demand
-- **Error handling**: Graceful failures at every stage with retry logic
-- **Email tracking**: Mark emails as opened/replied with timestamps
-- **Follow-up scheduling**: Set follow-up dates, snooze overdue items, manage pipeline
-- **Follow-up dashboard**: Dedicated view for overdue and upcoming follow-ups
-- **Test suite**: 69 tests covering all core modules
+- Run one URL or a list of URLs. Batch mode drafts only.
+- Pick a tone, then edit or regenerate the draft.
+- Send only after you confirm, from your own Gmail account.
+- Read the outreach log, mark opened or replied, and set follow-up dates.
+- Snooze follow-ups from the Follow-Ups tab.
 
 ---
 
-## Environment Variables
+## Known limitations
 
-| Variable             | Required | Description                          |
-|----------------------|----------|--------------------------------------|
-| `ANTHROPIC_API_KEY`  | Yes      | Anthropic API key for Claude         |
-| `GMAIL_ADDRESS`      | Yes*     | Gmail address for sending emails     |
-| `GMAIL_APP_PASSWORD` | Yes*     | Gmail App Password (16 chars)        |
-| `SENDER_NAME`        | No       | Display name on sent emails          |
-
-*Required only for sending emails. Scraping and analysis work without Gmail credentials.
+- **JavaScript-heavy sites**: Basic scraping uses `requests`, which does not execute JavaScript. The Playwright fallback has to be installed separately (`playwright install chromium`).
+- **Rate limiting**: Some sites block automated requests. The scraper sends a User-Agent and waits 1 second between requests. It cannot get past aggressive anti-bot measures.
+- **Content extraction**: The scraper looks for common page structures. Unusual layouts return less useful text.
+- **Gmail sending limits**: Gmail caps how much mail a normal account can send in a day (on the order of 500). This is meant for a short list of prospects, not a blast.
+- **Single language**: Website reading and email generation are English only.
+- **Open tracking is manual**: There is no tracking pixel. "Opened" and "replied" are statuses you set yourself.
 
 ---
 
-## Known Limitations
+## Design notes
 
-- **JavaScript-heavy sites**: Basic scraping uses `requests` which doesn't execute JavaScript. Playwright fallback is available but must be installed separately (`playwright install chromium`).
-- **Rate limiting**: Some sites may block automated requests. The scraper includes a User-Agent header and 1-second delays but cannot bypass aggressive anti-bot measures.
-- **Content extraction**: The scraper targets common page structures. Highly unconventional site layouts may yield less useful content.
-- **Gmail sending limits**: Gmail has daily sending limits (~500 for regular accounts). This tool is designed for targeted outreach, not bulk email.
-- **Single language**: Currently supports English-language websites and email generation only.
-
----
-
-## Design Decisions
-
-1. **Custom agent loop over LangChain/CrewAI**: For a focused pipeline with 4 clear stages, a custom orchestrator is simpler, more debuggable, and avoids framework overhead.
-2. **SMTP over Gmail OAuth2**: App Password auth is faster to set up and sufficient for a demo. OAuth2 would be preferred for production.
-3. **Pydantic models**: Ensures structured data flows between pipeline stages with validation.
-4. **Separated modules**: Each phase is an independent module that can be tested and used standalone.
-5. **Streamlit**: Provides a polished demo UI with minimal code, supporting the visual requirements of the project.
-
----
-
-## Tech Stack
-
-- **Python 3.10+**
-- **Anthropic Claude** (Sonnet) — LLM for analysis and email drafting
-- **BeautifulSoup4** — HTML parsing and content extraction
-- **Requests** — HTTP client for web scraping
-- **Playwright** — Headless browser fallback for JS-rendered sites
-- **Streamlit** — Web UI framework
-- **Pydantic v2** — Data validation and serialization
-- **pytest** — Test framework (69 tests)
-- **python-dotenv** — Environment variable management
+1. **A plain pipeline instead of LangChain or CrewAI.** Four stages with a clear handoff are easier to debug without a framework in the middle.
+2. **SMTP with an app password instead of Gmail OAuth.** Faster to set up for a personal tool. OAuth is the better choice if this ever sends as more than one person.
+3. **Pydantic models** between stages, so a bad model response fails at the boundary instead of halfway through a send.
+4. **Separate modules.** Scrape, analyze, draft, and send can each be called on their own.
+5. **Streamlit** for the review screen and the log. It is enough UI for this; it is not a mail server, which is why tracking stays manual.

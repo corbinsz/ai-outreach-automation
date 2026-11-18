@@ -1,7 +1,7 @@
 """
 Need Analysis Module
 Uses Claude to analyze scraped website content and identify the prospect's
-pain points, gaps, and opportunities where DAVID AI's services add value.
+pain points, gaps, and practical opportunities.
 """
 
 import json
@@ -14,23 +14,11 @@ from src.models import ScrapedWebsite, NeedAnalysis
 
 logger = logging.getLogger(__name__)
 
-ANALYSIS_SYSTEM_PROMPT = """You are a senior business development analyst at DAVID AI, \
-a company that provides world-class AI engineering services to help businesses \
-scale intelligence tenfold. DAVID AI specializes in:
+ANALYSIS_SYSTEM_PROMPT = """You are a senior business development analyst preparing notes for a personalized outreach email.
 
-- AI transformation and strategy consulting
-- Custom AI/ML model development and deployment
-- Workflow automation powered by AI
-- Data pipeline engineering and analytics
-- AI-powered product features and integrations
-- LLM application development (chatbots, agents, RAG systems)
+Read the prospect's website and identify how the business actually works: what they sell, who they serve, and where the work looks manual, slow, or hard to measure. Look for concrete openings where data, automation, or operations support could help. Do not assume a product catalog, and do not invent a company or product name for the sender.
 
-Your job is to analyze a prospective client's website content and produce a \
-structured analysis that will be used to craft a personalized outreach email.
-
-Be specific and insightful. Reference actual details from the website—avoid \
-generic observations. Think like a consultant identifying real opportunities, \
-not a salesperson pushing features."""
+Be specific. Reference actual details from the website and avoid generic observations. Think like a consultant identifying real opportunities, not a salesperson pushing features."""
 
 ANALYSIS_USER_PROMPT = """Analyze the following website content for a prospective client. \
 Produce a detailed JSON analysis.
@@ -56,11 +44,11 @@ Return a JSON object with exactly these fields:
     "Specific pain point 3 - connect to their industry context"
   ],
   "ai_opportunities": [
-    "Specific AI opportunity 1 - how DAVID AI could help, tied to their actual business",
-    "Specific AI opportunity 2 - practical use case with expected impact",
-    "Specific AI opportunity 3 - strategic advantage they could gain"
+    "Specific opportunity 1 - how data, automation, or operations work could help, tied to their actual business",
+    "Specific opportunity 2 - a practical use case with a plausible impact",
+    "Specific opportunity 3 - a concrete advantage they could gain"
   ],
-  "value_proposition": "A tailored 2-3 sentence value proposition explaining why DAVID AI is the right partner for this specific company. Reference their actual situation.",
+  "value_proposition": "A tailored 2-3 sentence note on why a conversation could be useful for this specific company. Reference their actual situation. Do not invent a company or product name for the sender.",
   "recommended_angle": "The single best angle of approach for the outreach email. What topic will resonate most? What pain point is most urgent? What's the hook?"
 }}
 
