@@ -15,7 +15,7 @@ VALID_ANALYSIS_JSON = json.dumps({
     "services_offered": ["Widget Design", "Custom Fabrication"],
     "pain_points": ["Manual quality inspection", "Slow order processing"],
     "ai_opportunities": ["Automated visual QA", "Order routing optimization"],
-    "value_proposition": "DAVID AI can automate Acme's QA pipeline.",
+    "value_proposition": "Automating visual inspection could take manual QA off Acme's line.",
     "recommended_angle": "Quality control automation",
 })
 
@@ -124,6 +124,7 @@ class TestAnalyzeProspect:
         assert result.company_name == "Acme Corp"
         assert client.messages.create.call_count == 2
 
-    def test_system_prompt_mentions_david_ai(self):
-        assert "DAVID AI" in ANALYSIS_SYSTEM_PROMPT
-        assert "pain" in ANALYSIS_SYSTEM_PROMPT.lower() or "opportunities" in ANALYSIS_SYSTEM_PROMPT.lower() or "analyst" in ANALYSIS_SYSTEM_PROMPT.lower()
+    def test_system_prompt_asks_for_grounded_analysis(self):
+        lowered = ANALYSIS_SYSTEM_PROMPT.lower()
+        assert "analyst" in lowered
+        assert "pain" in lowered or "opportunit" in lowered

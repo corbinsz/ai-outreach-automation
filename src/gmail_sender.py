@@ -13,7 +13,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from src.models import EmailDraft, OutreachRecord
+from src.models import EmailDraft, OutreachRecord, resolve_sender_name
 
 logger = logging.getLogger(__name__)
 
@@ -100,7 +100,7 @@ def send_email(
     to_address: str,
     gmail_address: str,
     gmail_app_password: str,
-    sender_name: str = "DAVID AI",
+    sender_name: str | None = None,
     prospect_url: str = "",
     prospect_name: str = "",
 ) -> OutreachRecord:
@@ -112,13 +112,14 @@ def send_email(
         to_address: Recipient email address.
         gmail_address: Your Gmail address.
         gmail_app_password: Gmail App Password (16-char).
-        sender_name: Display name for the sender.
+        sender_name: Display name for the sender. Uses SENDER_NAME when omitted.
         prospect_url: URL of the prospect's website (for logging).
         prospect_name: Name of the prospect company (for logging).
 
     Returns:
         OutreachRecord documenting the send attempt.
     """
+    sender_name = resolve_sender_name(sender_name)
     record = OutreachRecord(
         prospect_url=prospect_url,
         prospect_name=prospect_name,

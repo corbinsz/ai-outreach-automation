@@ -39,6 +39,24 @@ class TestSendEmail:
 
     @patch("src.gmail_sender._log_outreach")
     @patch("src.gmail_sender.smtplib.SMTP")
+    def test_sender_name_from_env(self, mock_smtp_cls, mock_log, monkeypatch):
+        monkeypatch.setenv("SENDER_NAME", "Casey Lee")
+        server = MagicMock()
+        mock_smtp_cls.return_value.__enter__ = MagicMock(return_value=server)
+        mock_smtp_cls.return_value.__exit__ = MagicMock(return_value=False)
+
+        send_email(
+            draft=_make_draft(),
+            to_address="recipient@example.com",
+            gmail_address="sender@gmail.com",
+            gmail_app_password="abcdefghijklmnop",
+        )
+
+        sent = server.send_message.call_args[0][0]
+        assert sent["From"] == "Casey Lee <sender@gmail.com>"
+
+    @patch("src.gmail_sender._log_outreach")
+    @patch("src.gmail_sender.smtplib.SMTP")
     def test_auth_failure_no_retry(self, mock_smtp_cls, mock_log):
         server = MagicMock()
         server.login.side_effect = smtplib.SMTPAuthenticationError(535, b"Auth failed")
