@@ -1,19 +1,22 @@
-"""
-Need Analysis Module
-Uses Claude to analyze scraped website content and identify the prospect's
-pain points, gaps, and practical opportunities.
+"""Ask Claude for structured notes on a scraped site.
+
+The call is one shot. Temporary API errors are retried in llm_client. A bad
+JSON reply is not retried: the parser either recovers the object or the run
+stops before a draft is written from garbage.
 """
 
-import json
 import logging
-import time
 
 import anthropic
 
-from src.models import ScrapedWebsite, NeedAnalysis
+from src.llm_client import create_message
+from src.llm_json import parse_llm_json
+from src.models import DEFAULT_MODEL, NeedAnalysis, ScrapedWebsite
 
 logger = logging.getLogger(__name__)
 
+# The prompt refuses a made-up sender company. It still allows industry
+# inferences when the page is thin, which is a known quality limit.
 ANALYSIS_SYSTEM_PROMPT = """You are a senior business development analyst preparing notes for a personalized outreach email.
 
 Read the prospect's website and identify how the business actually works: what they sell, who they serve, and where the work looks manual, slow, or hard to measure. Look for concrete openings where data, automation, or operations support could help. Do not assume a product catalog, and do not invent a company or product name for the sender.
@@ -59,29 +62,22 @@ Important guidelines:
 - The recommended_angle should be the most compelling single hook for the outreach email.
 - Return ONLY the JSON object, no markdown formatting or code blocks."""
 
+# Character cap, not a token cap. It keeps one prospect from dominating the
+# prompt and the bill. The cut can land mid-sentence.
+_MAX_CONTENT_CHARS = 15000
+
 
 def analyze_prospect(
     scraped: ScrapedWebsite,
     api_key: str,
-    model: str = "claude-sonnet-4-5-20250929",
+    model: str = DEFAULT_MODEL,
 ) -> NeedAnalysis:
-    """
-    Analyze scraped website content using Claude to identify prospect needs.
-
-    Args:
-        scraped: The scraped website data.
-        api_key: Anthropic API key.
-        model: Claude model to use.
-
-    Returns:
-        NeedAnalysis with structured analysis results.
-    """
+    """Return structured notes for one scraped site."""
     client = anthropic.Anthropic(api_key=api_key)
 
-    # Truncate content if needed to stay within token limits
     content = scraped.raw_text_summary
-    if len(content) > 15000:
-        content = content[:15000] + "\n\n... [content truncated for analysis]"
+    if len(content) > _MAX_CONTENT_CHARS:
+        content = content[:_MAX_CONTENT_CHARS] + "\n\n... [content truncated for analysis]"
 
     user_prompt = ANALYSIS_USER_PROMPT.format(
         url=scraped.base_url,
@@ -89,51 +85,9 @@ def analyze_prospect(
         content=content,
     )
 
-    logger.info(f"Sending analysis request to Claude ({model})...")
-
-    # Retry with backoff for transient API errors (rate limits, overload, network)
-    max_retries = 3
-    message = None
-    for attempt in range(1, max_retries + 1):
-        try:
-            message = client.messages.create(
-                model=model,
-                max_tokens=2000,
-                system=ANALYSIS_SYSTEM_PROMPT,
-                messages=[{"role": "user", "content": user_prompt}],
-            )
-            break
-        except (anthropic.RateLimitError, anthropic.APIConnectionError, anthropic.InternalServerError) as e:
-            if attempt == max_retries:
-                raise
-            wait = 2 ** attempt
-            logger.warning(f"Anthropic API error (attempt {attempt}/{max_retries}): {e}. Retrying in {wait}s...")
-            time.sleep(wait)
-
-    response_text = message.content[0].text.strip()
-
-    # Parse JSON response - handle potential markdown wrapping
-    if response_text.startswith("```"):
-        lines = response_text.split("\n")
-        # Strip opening ```json and closing ``` lines
-        if len(lines) > 2:
-            response_text = "\n".join(lines[1:-1])
-        else:
-            response_text = response_text.strip("`").strip()
-
-    try:
-        data = json.loads(response_text)
-    except json.JSONDecodeError as e:
-        logger.error(f"Failed to parse LLM response as JSON: {e}")
-        logger.error(f"Raw response: {response_text[:500]}")
-        # Attempt a more lenient parse
-        start = response_text.find("{")
-        end = response_text.rfind("}") + 1
-        if start >= 0 and end > start:
-            data = json.loads(response_text[start:end])
-        else:
-            raise ValueError(f"LLM did not return valid JSON: {response_text[:200]}")
-
+    logger.info("Sending analysis request to Claude (%s)...", model)
+    message = create_message(client, model, ANALYSIS_SYSTEM_PROMPT, user_prompt, max_tokens=2000)
+    data = parse_llm_json(message.content[0].text)
     analysis = NeedAnalysis(**data)
-    logger.info(f"Analysis complete for {analysis.company_name}")
+    logger.info("Analysis complete for %s", analysis.company_name)
     return analysis

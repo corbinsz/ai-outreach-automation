@@ -2,11 +2,10 @@
 
 import json
 import smtplib
-import pytest
-from unittest.mock import patch, MagicMock
-from pathlib import Path
+from unittest.mock import MagicMock, patch
 
-from src.gmail_sender import send_email, get_outreach_log, _log_outreach, update_outreach_record
+import pytest
+from src.gmail_sender import _log_outreach, get_outreach_log, send_email, update_outreach_record
 from src.models import EmailDraft, OutreachRecord
 
 
@@ -79,7 +78,9 @@ class TestSendEmail:
     @patch("src.gmail_sender.smtplib.SMTP")
     def test_recipient_refused_no_retry(self, mock_smtp_cls, mock_log):
         server = MagicMock()
-        server.send_message.side_effect = smtplib.SMTPRecipientsRefused({"bad@x.com": (550, b"No such user")})
+        server.send_message.side_effect = smtplib.SMTPRecipientsRefused(
+            {"bad@x.com": (550, b"No such user")}
+        )
         mock_smtp_cls.return_value.__enter__ = MagicMock(return_value=server)
         mock_smtp_cls.return_value.__exit__ = MagicMock(return_value=False)
 
@@ -119,8 +120,6 @@ class TestSendEmail:
 
 class TestOutreachLog:
     def test_log_and_read(self, tmp_path):
-        log_file = tmp_path / "outreach_log.json"
-
         with patch("src.gmail_sender.LOG_DIR", tmp_path):
             record = OutreachRecord(
                 prospect_url="https://example.com",

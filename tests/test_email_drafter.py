@@ -1,17 +1,18 @@
 """Tests for the email drafting module."""
 
 import json
+from unittest.mock import MagicMock, patch
+
 import pytest
-from unittest.mock import patch, MagicMock
+from src.email_drafter import EMAIL_SYSTEM_PROMPT, TONE_DESCRIPTIONS, draft_email
+from src.models import EmailDraft, NeedAnalysis
 
-from src.email_drafter import draft_email, TONE_DESCRIPTIONS, EMAIL_SYSTEM_PROMPT
-from src.models import NeedAnalysis, EmailDraft
-
-
-VALID_DRAFT_JSON = json.dumps({
-    "subject": "Quick question about your QA process",
-    "body": "Hi there,\n\nI noticed Acme's focus on precision manufacturing...\n\nBest,\nJane Smith",
-})
+VALID_DRAFT_JSON = json.dumps(
+    {
+        "subject": "Quick question about your QA process",
+        "body": "Hi there,\n\nI noticed Acme's focus on precision manufacturing...\n\nBest,\nJane Smith",
+    }
+)
 
 
 def _make_analysis() -> NeedAnalysis:
@@ -103,7 +104,7 @@ class TestDraftEmail:
         with pytest.raises(ValueError, match="LLM did not return valid JSON"):
             draft_email(_make_analysis(), api_key="test-key")
 
-    @patch("src.email_drafter.time.sleep")
+    @patch("src.llm_client.time.sleep")
     @patch("src.email_drafter.anthropic.Anthropic")
     def test_retries_on_rate_limit(self, mock_client_cls, mock_sleep):
         import anthropic as anthropic_mod

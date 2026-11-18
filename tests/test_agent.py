@@ -1,10 +1,9 @@
 """Tests for the pipeline orchestrator."""
 
-import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
-from src.agent import OutreachAgent, AgentConfig, PipelineResult
-from src.models import ScrapedWebsite, ScrapedPage, NeedAnalysis, EmailDraft, OutreachRecord
+from src.agent import AgentConfig, OutreachAgent
+from src.models import EmailDraft, NeedAnalysis, OutreachRecord, ScrapedPage, ScrapedWebsite
 
 
 def _make_config() -> AgentConfig:
@@ -19,7 +18,11 @@ def _make_scraped() -> ScrapedWebsite:
     return ScrapedWebsite(
         base_url="https://acme.com",
         company_name="Acme",
-        pages=[ScrapedPage(url="https://acme.com", content="Acme builds widgets.", page_type="homepage")],
+        pages=[
+            ScrapedPage(
+                url="https://acme.com", content="Acme builds widgets.", page_type="homepage"
+            )
+        ],
         raw_text_summary="Acme builds widgets.",
     )
 
@@ -149,8 +152,10 @@ class TestOutreachAgent:
 
         agent = OutreachAgent(_make_config())
 
-        with patch("src.agent.analyze_prospect", return_value=_make_analysis()), \
-             patch("src.agent.draft_email", return_value=_make_draft()):
+        with (
+            patch("src.agent.analyze_prospect", return_value=_make_analysis()),
+            patch("src.agent.draft_email", return_value=_make_draft()),
+        ):
             results = agent.run_batch(urls=["https://a.com", "https://b.com"])
 
         assert len(results) == 2

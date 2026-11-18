@@ -1,8 +1,8 @@
-anthropic>=0.40.0
-beautifulsoup4>=4.12.0
-requests>=2.31.0
-playwright>=1.40.0
-streamlit>=1.30.0
-pydantic>=2.5.0
-python-dotenv>=1.0.0
-pytest>=8.0.0
+# Runtime dependencies, pinned to the versions the tests were run against.
+anthropic==2.10.0
+beautifulsoup4==4.15.0
+requests==2.34.2
+playwright==1.65.2
+streamlit==1.67.0
+pydantic==2.14.3
+python-dotenv==1.2.4

@@ -1,23 +1,24 @@
 """Tests for the LLM analysis module."""
 
 import json
+from unittest.mock import MagicMock, patch
+
 import pytest
-from unittest.mock import patch, MagicMock
+from src.analyzer import ANALYSIS_SYSTEM_PROMPT, analyze_prospect
+from src.models import NeedAnalysis, ScrapedPage, ScrapedWebsite
 
-from src.analyzer import analyze_prospect, ANALYSIS_SYSTEM_PROMPT
-from src.models import ScrapedWebsite, ScrapedPage, NeedAnalysis
-
-
-VALID_ANALYSIS_JSON = json.dumps({
-    "company_name": "Acme Corp",
-    "company_summary": "Acme builds widgets for enterprise clients.",
-    "industry": "Manufacturing",
-    "services_offered": ["Widget Design", "Custom Fabrication"],
-    "pain_points": ["Manual quality inspection", "Slow order processing"],
-    "ai_opportunities": ["Automated visual QA", "Order routing optimization"],
-    "value_proposition": "Automating visual inspection could take manual QA off Acme's line.",
-    "recommended_angle": "Quality control automation",
-})
+VALID_ANALYSIS_JSON = json.dumps(
+    {
+        "company_name": "Acme Corp",
+        "company_summary": "Acme builds widgets for enterprise clients.",
+        "industry": "Manufacturing",
+        "services_offered": ["Widget Design", "Custom Fabrication"],
+        "pain_points": ["Manual quality inspection", "Slow order processing"],
+        "ai_opportunities": ["Automated visual QA", "Order routing optimization"],
+        "value_proposition": "Automating visual inspection could take manual QA off Acme's line.",
+        "recommended_angle": "Quality control automation",
+    }
+)
 
 
 def _make_scraped(content: str = "Acme builds widgets.") -> ScrapedWebsite:
@@ -99,7 +100,7 @@ class TestAnalyzeProspect:
         with pytest.raises(ValueError, match="LLM did not return valid JSON"):
             analyze_prospect(_make_scraped(), api_key="test-key")
 
-    @patch("src.analyzer.time.sleep")
+    @patch("src.llm_client.time.sleep")
     @patch("src.analyzer.anthropic.Anthropic")
     def test_retries_on_rate_limit(self, mock_client_cls, mock_sleep):
         """Should retry on RateLimitError and succeed on second attempt."""

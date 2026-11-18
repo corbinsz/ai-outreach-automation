@@ -1,17 +1,16 @@
-"""
-Email Drafting Module
-Generates personalized cold outreach emails using the need analysis results.
-References specific details from the prospect's website.
-Supports tone/style customization.
+"""Draft one cold email from the analysis notes.
+
+Tone is a closed set so the UI and the prompt cannot drift apart. The
+sign-off uses the configured sender name and does not invent a company.
 """
 
-import json
 import logging
-import time
 
 import anthropic
 
-from src.models import NeedAnalysis, EmailDraft, resolve_sender_name
+from src.llm_client import create_message
+from src.llm_json import parse_llm_json
+from src.models import DEFAULT_MODEL, EmailDraft, NeedAnalysis, resolve_sender_name
 
 logger = logging.getLogger(__name__)
 
@@ -68,81 +67,28 @@ def draft_email(
     api_key: str,
     sender_name: str | None = None,
     tone: str = "professional",
-    model: str = "claude-sonnet-4-5-20250929",
+    model: str = DEFAULT_MODEL,
 ) -> EmailDraft:
-    """
-    Generate a personalized outreach email based on the need analysis.
-
-    Args:
-        analysis: The prospect need analysis.
-        api_key: Anthropic API key.
-        sender_name: Name to sign the email with. Uses SENDER_NAME when omitted.
-        tone: Email tone - professional, conversational, bold, or consultative.
-        model: Claude model to use.
-
-    Returns:
-        EmailDraft with subject and body.
-    """
+    """Write one draft. An unknown tone falls back to professional rather than failing closed."""
     sender_name = resolve_sender_name(sender_name)
     client = anthropic.Anthropic(api_key=api_key)
-
     tone_desc = TONE_DESCRIPTIONS.get(tone, TONE_DESCRIPTIONS["professional"])
 
-    analysis_json = analysis.model_dump_json(indent=2)
-
     user_prompt = EMAIL_USER_PROMPT.format(
-        analysis_json=analysis_json,
+        analysis_json=analysis.model_dump_json(indent=2),
         tone=tone,
         tone_description=tone_desc,
         sender_name=sender_name,
     )
 
-    logger.info(f"Generating email draft (tone: {tone})...")
-
-    # Retry with backoff for transient API errors (rate limits, overload, network)
-    max_retries = 3
-    message = None
-    for attempt in range(1, max_retries + 1):
-        try:
-            message = client.messages.create(
-                model=model,
-                max_tokens=1000,
-                system=EMAIL_SYSTEM_PROMPT,
-                messages=[{"role": "user", "content": user_prompt}],
-            )
-            break
-        except (anthropic.RateLimitError, anthropic.APIConnectionError, anthropic.InternalServerError) as e:
-            if attempt == max_retries:
-                raise
-            wait = 2 ** attempt
-            logger.warning(f"Anthropic API error (attempt {attempt}/{max_retries}): {e}. Retrying in {wait}s...")
-            time.sleep(wait)
-
-    response_text = message.content[0].text.strip()
-
-    # Parse JSON response - handle potential markdown wrapping
-    if response_text.startswith("```"):
-        lines = response_text.split("\n")
-        if len(lines) > 2:
-            response_text = "\n".join(lines[1:-1])
-        else:
-            response_text = response_text.strip("`").strip()
-
-    try:
-        data = json.loads(response_text)
-    except json.JSONDecodeError:
-        start = response_text.find("{")
-        end = response_text.rfind("}") + 1
-        if start >= 0 and end > start:
-            data = json.loads(response_text[start:end])
-        else:
-            raise ValueError(f"LLM did not return valid JSON: {response_text[:200]}")
+    logger.info("Generating email draft (tone: %s)...", tone)
+    message = create_message(client, model, EMAIL_SYSTEM_PROMPT, user_prompt, max_tokens=1000)
+    data = parse_llm_json(message.content[0].text)
 
     draft = EmailDraft(
         subject=data["subject"],
         body=data["body"],
         tone=tone,
     )
-
-    logger.info(f"Email draft generated: \"{draft.subject}\"")
+    logger.info('Email draft generated: "%s"', draft.subject)
     return draft

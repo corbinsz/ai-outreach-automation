@@ -1,17 +1,18 @@
-"""
-Gmail Sender Module
-Sends emails via SMTP using Gmail App Password.
-Includes confirmation step, logging, error handling, and retry logic.
+"""Send one message through the operator's own Gmail account.
+
+SMTP with an app password is enough for a single person and a short list.
+It is the wrong design for a shared inbox: there is no per-user OAuth, and
+a revoked password fails the same way as a typo. The UI is what asks for
+confirmation. This function sends when it is called.
 """
 
 import json
-import smtplib
 import logging
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
+import smtplib
 from datetime import datetime
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 from pathlib import Path
-from typing import Optional
 
 from src.models import EmailDraft, OutreachRecord, resolve_sender_name
 
@@ -23,13 +24,17 @@ MAX_RETRIES = 3
 LOG_DIR = Path("logs")
 
 
-def _ensure_log_dir():
-    """Ensure the logs directory exists."""
+def _ensure_log_dir() -> None:
     LOG_DIR.mkdir(exist_ok=True)
 
 
-def _log_outreach(record: OutreachRecord):
-    """Append an outreach record to the CRM-style JSON log."""
+def _log_outreach(record: OutreachRecord) -> None:
+    """Append one row to a JSON file.
+
+    A file is easier to inspect than a database for a personal tool. It is
+    also easy to corrupt if two processes write it at once. This app assumes
+    one local user.
+    """
     _ensure_log_dir()
     log_file = LOG_DIR / "outreach_log.json"
 
@@ -58,20 +63,13 @@ def get_outreach_log() -> list[OutreachRecord]:
         return []
 
 
-def update_outreach_record(index: int, **fields) -> OutreachRecord:
-    """
-    Update specific fields of an outreach record by index.
+def update_outreach_record(index: int, **fields: object) -> OutreachRecord:
+    """Update one log row by position.
 
-    Args:
-        index: Zero-based index into the outreach log list.
-        **fields: Field names and values to update (must be valid OutreachRecord fields).
-
-    Returns:
-        The updated OutreachRecord.
-
-    Raises:
-        IndexError: If index is out of range.
-        ValueError: If any field name is not a valid OutreachRecord field.
+    The index is the position in the file, not a stable id. That matches the
+    UI, which renders the file in order. Inserting a row in front would
+    retarget an older button. Unknown field names are rejected so a typo
+    cannot add a key the model would drop on the next read.
     """
     log_file = LOG_DIR / "outreach_log.json"
     records = []
@@ -104,20 +102,11 @@ def send_email(
     prospect_url: str = "",
     prospect_name: str = "",
 ) -> OutreachRecord:
-    """
-    Send an email via Gmail SMTP with retry logic.
+    """Send the draft and append a log row for both success and failure.
 
-    Args:
-        draft: The email draft to send.
-        to_address: Recipient email address.
-        gmail_address: Your Gmail address.
-        gmail_app_password: Gmail App Password (16-char).
-        sender_name: Display name for the sender. Uses SENDER_NAME when omitted.
-        prospect_url: URL of the prospect's website (for logging).
-        prospect_name: Name of the prospect company (for logging).
-
-    Returns:
-        OutreachRecord documenting the send attempt.
+    Auth errors and rejected recipients are permanent, so they are not
+    retried. Other SMTP errors are tried up to MAX_RETRIES times, with no
+    delay between tries.
     """
     sender_name = resolve_sender_name(sender_name)
     record = OutreachRecord(

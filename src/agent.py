@@ -1,26 +1,26 @@
-"""
-Agent Orchestrator
-Orchestrates the full outreach pipeline:
-URL Input -> Web Scraper -> LLM Analysis -> Email Draft -> Review/Confirm -> Gmail Send
+"""Run scrape, analysis, and draft as one pipeline.
 
-Supports single URL and batch mode.
+The default stop is a draft. auto_send exists for a scripted caller. The
+Streamlit UI does not set it: a person confirms on the page, then calls send.
+Batch mode always stops at the draft so a list of URLs cannot mail itself.
 """
 
 import logging
 from dataclasses import dataclass, field
-from typing import Optional, Callable
 
-from src.scraper import scrape_website
 from src.analyzer import analyze_prospect
 from src.email_drafter import draft_email
 from src.gmail_sender import send_email
 from src.models import (
-    ScrapedWebsite,
-    NeedAnalysis,
+    DEFAULT_MODEL,
     EmailDraft,
+    NeedAnalysis,
     OutreachRecord,
+    ProgressCallback,
+    ScrapedWebsite,
     resolve_sender_name,
 )
+from src.scraper import scrape_website
 
 logger = logging.getLogger(__name__)
 
@@ -28,36 +28,40 @@ logger = logging.getLogger(__name__)
 @dataclass
 class AgentConfig:
     """Configuration for the outreach agent."""
+
     anthropic_api_key: str
     gmail_address: str = ""
     gmail_app_password: str = ""
     sender_name: str = field(default_factory=resolve_sender_name)
     tone: str = "professional"
-    llm_model: str = "claude-sonnet-4-5-20250929"
+    llm_model: str = DEFAULT_MODEL
     use_playwright: bool = True
 
 
 @dataclass
 class PipelineResult:
-    """Result of a single pipeline run."""
+    """Everything one URL produced, including the stage it stopped at.
+
+    stage is a string because the UI and the tests match on a handful of
+    values. An enum would not add a check they do not already have.
+    """
+
     url: str
-    scraped: Optional[ScrapedWebsite] = None
-    analysis: Optional[NeedAnalysis] = None
-    draft: Optional[EmailDraft] = None
-    send_result: Optional[OutreachRecord] = None
-    error: Optional[str] = None
-    stage: str = "not_started"  # scraping, analyzing, drafting, reviewing, sending, complete, failed
+    scraped: ScrapedWebsite | None = None
+    analysis: NeedAnalysis | None = None
+    draft: EmailDraft | None = None
+    send_result: OutreachRecord | None = None
+    error: str | None = None
+    stage: str = "not_started"
 
 
 class OutreachAgent:
-    """
-    AI-Powered Outreach Agent that automates the full prospecting pipeline.
-    """
+    """One configured pass over the four stages. The stages are also public so the UI can drive them."""
 
-    def __init__(self, config: AgentConfig):
+    def __init__(self, config: AgentConfig) -> None:
         self.config = config
 
-    def scrape(self, url: str, progress_callback: Optional[Callable] = None) -> ScrapedWebsite:
+    def scrape(self, url: str, progress_callback: ProgressCallback | None = None) -> ScrapedWebsite:
         """Phase 1: Scrape the prospect's website."""
         return scrape_website(
             url=url,
@@ -106,20 +110,9 @@ class OutreachAgent:
         url: str,
         to_address: str = "",
         auto_send: bool = False,
-        progress_callback: Optional[Callable] = None,
+        progress_callback: ProgressCallback | None = None,
     ) -> PipelineResult:
-        """
-        Run the full pipeline end-to-end for a single URL.
-
-        Args:
-            url: Prospect website URL.
-            to_address: Recipient email (required if auto_send=True).
-            auto_send: If True, sends without review. If False, stops at draft stage.
-            progress_callback: Optional callable(message: str) for progress updates.
-
-        Returns:
-            PipelineResult with all intermediate data.
-        """
+        """Run one URL. Stops at the draft unless auto_send is set and a recipient is present."""
         result = PipelineResult(url=url)
 
         def _log(msg: str):
@@ -148,7 +141,7 @@ class OutreachAgent:
             result.stage = "drafting"
             _log("Phase 3: Drafting outreach email...")
             result.draft = self.draft(result.analysis)
-            _log(f"Draft ready: \"{result.draft.subject}\"")
+            _log(f'Draft ready: "{result.draft.subject}"')
 
             # Phase 4: Send (only if auto_send)
             if auto_send and to_address:
@@ -182,12 +175,9 @@ class OutreachAgent:
     def run_batch(
         self,
         urls: list[str],
-        progress_callback: Optional[Callable] = None,
+        progress_callback: ProgressCallback | None = None,
     ) -> list[PipelineResult]:
-        """
-        Run the pipeline for multiple URLs (batch mode).
-        Stops at draft stage for each—does not auto-send.
-        """
+        """Draft every URL. One failure is recorded and the next URL still runs."""
         results = []
         for i, url in enumerate(urls, 1):
             if progress_callback:
