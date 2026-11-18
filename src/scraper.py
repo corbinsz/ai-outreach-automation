@@ -1,19 +1,20 @@
-"""
-Web Scraping Module
-Accepts a URL, discovers key pages (about, services, blog),
-extracts and cleans HTML into structured text content.
+"""Read a few public pages and turn them into text for the model.
+
+Requests is the default because it has no browser to install. Playwright runs
+only when the HTML is too thin to be a real page, which usually means the
+site painted its content with JavaScript. This is not a crawler: one site,
+a page cap, and a pause between requests.
 """
 
+import logging
 import re
 import time
-import logging
 from urllib.parse import urljoin, urlparse
-from typing import Optional
 
 import requests
 from bs4 import BeautifulSoup
 
-from src.models import ScrapedPage, ScrapedWebsite
+from src.models import ProgressCallback, ScrapedPage, ScrapedWebsite
 
 logger = logging.getLogger(__name__)
 
@@ -39,11 +40,20 @@ PAGE_KEYWORDS = {
 
 # Elements to strip from HTML before text extraction
 STRIP_ELEMENTS = [
-    "script", "style", "nav", "footer", "header", "noscript",
-    "iframe", "svg", "form", "button",
+    "script",
+    "style",
+    "nav",
+    "footer",
+    "header",
+    "noscript",
+    "iframe",
+    "svg",
+    "form",
+    "button",
 ]
 
-# Default headers to mimic a browser
+# Pretending to be Chrome gets HTML back from simple bot filters. It also
+# hides who is asking. That tradeoff is called out in docs/PRODUCT_NOTES.md.
 DEFAULT_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -55,12 +65,14 @@ DEFAULT_HEADERS = {
 }
 
 REQUEST_TIMEOUT = 15
-RATE_LIMIT_DELAY = 1.0  # seconds between requests
-MAX_PAGES = 8  # max pages to scrape per site
-MAX_CONTENT_LENGTH = 5000  # max chars per page to keep
+# A fixed pause is a courtesy, not compliance. It does not read robots.txt.
+RATE_LIMIT_DELAY = 1.0
+# A cap so one prospect cannot turn into a crawl.
+MAX_PAGES = 8
+MAX_CONTENT_LENGTH = 5000
 
 
-def _fetch_page(url: str, session: requests.Session) -> Optional[str]:
+def _fetch_page(url: str, session: requests.Session) -> str | None:
     """Fetch a single page's HTML content with error handling."""
     try:
         response = session.get(url, headers=DEFAULT_HEADERS, timeout=REQUEST_TIMEOUT)
@@ -155,8 +167,13 @@ def _extract_company_name(html: str, url: str) -> str:
 
 # Junk email patterns to filter out
 _JUNK_EMAIL_PATTERNS = {
-    "noreply@", "no-reply@", "donotreply@", "mailer-daemon@",
-    "postmaster@", "webmaster@", "hostmaster@",
+    "noreply@",
+    "no-reply@",
+    "donotreply@",
+    "mailer-daemon@",
+    "postmaster@",
+    "webmaster@",
+    "hostmaster@",
 }
 _JUNK_EMAIL_DOMAINS = {"example.com", "example.org", "example.net", "test.com", "sentry.io"}
 _JUNK_EMAIL_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".css", ".js"}
@@ -245,11 +262,15 @@ def _discover_links(html: str, base_url: str) -> list[tuple[str, str]]:
                     discovered[clean_url] = page_type
                 break
 
-    return list(discovered.items())[:MAX_PAGES - 1]  # -1 for homepage
+    return list(discovered.items())[: MAX_PAGES - 1]  # -1 for homepage
 
 
-def _try_playwright_fetch(url: str) -> Optional[str]:
-    """Fallback: use Playwright for JavaScript-rendered pages."""
+def _try_playwright_fetch(url: str) -> str | None:
+    """Render the page when requests only saw a shell.
+
+    Import is inside the function so the app still starts if Playwright
+    is not installed. The caller decides whether the fallback is worth it.
+    """
     try:
         from playwright.sync_api import sync_playwright
 
@@ -268,17 +289,16 @@ def _try_playwright_fetch(url: str) -> Optional[str]:
         return None
 
 
-def scrape_website(url: str, use_playwright_fallback: bool = True, progress_callback=None) -> ScrapedWebsite:
-    """
-    Main scraping function. Accepts a URL and returns structured website data.
+def scrape_website(
+    url: str,
+    use_playwright_fallback: bool = True,
+    progress_callback: ProgressCallback | None = None,
+) -> ScrapedWebsite:
+    """Fetch the homepage and a handful of internal pages that look relevant.
 
-    Args:
-        url: The target website URL to scrape.
-        use_playwright_fallback: Whether to try Playwright if requests gets thin content.
-        progress_callback: Optional callable(message: str) for progress updates.
-
-    Returns:
-        ScrapedWebsite with all discovered and scraped pages.
+    A missing scheme is treated as https. The function returns an empty site
+    instead of raising when the homepage cannot be fetched, so a batch can
+    record the failure and move on.
     """
     # Normalize URL
     if not url.startswith(("http://", "https://")):
@@ -322,12 +342,14 @@ def scrape_website(url: str, use_playwright_fallback: bool = True, progress_call
                 homepage_text = pw_text
                 company_name = _extract_company_name(pw_html, url)
 
-    pages.append(ScrapedPage(
-        url=url,
-        title=_extract_title(homepage_html),
-        content=homepage_text,
-        page_type="homepage",
-    ))
+    pages.append(
+        ScrapedPage(
+            url=url,
+            title=_extract_title(homepage_html),
+            content=homepage_text,
+            page_type="homepage",
+        )
+    )
     for e in _extract_emails(homepage_html):
         all_emails[e] = None
     _log(f"Homepage scraped: {len(homepage_text)} chars")
@@ -349,12 +371,14 @@ def scrape_website(url: str, use_playwright_fallback: bool = True, progress_call
             _log(f"Skipping thin page: {page_url}")
             continue
 
-        pages.append(ScrapedPage(
-            url=page_url,
-            title=_extract_title(html),
-            content=text,
-            page_type=page_type,
-        ))
+        pages.append(
+            ScrapedPage(
+                url=page_url,
+                title=_extract_title(html),
+                content=text,
+                page_type=page_type,
+            )
+        )
         for e in _extract_emails(html):
             all_emails[e] = None
         _log(f"Scraped {page_type}: {len(text)} chars")

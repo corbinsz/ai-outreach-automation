@@ -1,0 +1,17 @@
+[tool.black]
+line-length = 100
+target-version = ["py310"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+# Black owns wrapping. E501 also flags prompt text and SVG markup, which Black
+# leaves on one line on purpose so the strings stay intact.
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,19 +1,17 @@
 """Tests for the web scraping module."""
 
-import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 from src.scraper import (
-    _extract_text,
-    _extract_title,
+    MAX_CONTENT_LENGTH,
+    _discover_links,
     _extract_company_name,
     _extract_emails,
-    _discover_links,
+    _extract_text,
+    _extract_title,
     _fetch_page,
     scrape_website,
-    MAX_CONTENT_LENGTH,
 )
-
 
 # --- Sample HTML fixtures ---
 
@@ -95,7 +93,7 @@ class TestExtractCompanyName:
         assert name == "Acme Corp"
 
     def test_from_title_with_separator(self):
-        html = '<html><head><title>BigCo | Enterprise Solutions</title></head></html>'
+        html = "<html><head><title>BigCo | Enterprise Solutions</title></head></html>"
         name = _extract_company_name(html, "https://bigco.com")
         assert name == "BigCo"
 
@@ -157,6 +155,7 @@ class TestFetchPage:
 
     def test_timeout_returns_none(self):
         import requests
+
         session = MagicMock()
         session.get.side_effect = requests.exceptions.Timeout("timed out")
 
@@ -165,6 +164,7 @@ class TestFetchPage:
 
     def test_http_error_returns_none(self):
         import requests
+
         session = MagicMock()
         session.get.side_effect = requests.exceptions.HTTPError("404")
 
@@ -209,7 +209,7 @@ class TestScrapeWebsite:
         mock_fetch.return_value = SAMPLE_HTML
         messages = []
 
-        result = scrape_website(
+        scrape_website(
             "https://acme.com",
             use_playwright_fallback=False,
             progress_callback=messages.append,

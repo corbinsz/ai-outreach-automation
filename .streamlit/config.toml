@@ -4,5 +4,15 @@ backgroundColor = "#ffffff"
 secondaryBackgroundColor = "#f5f7fa"
 textColor = "#1e2a3a"
 
+[browser]
+# Local project. Do not send usage stats to Streamlit.
+gatherUsageStats = false
+
+[client]
+# "minimal" removes the toolbar that offers a one-click deploy.
+toolbarMode = "minimal"
+
 [server]
+# Bind to loopback only. This is a local app, not a service on a public address.
+address = "127.0.0.1"
 runOnSave = true

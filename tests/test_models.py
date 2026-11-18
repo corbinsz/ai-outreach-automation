@@ -1,13 +1,12 @@
 """Tests for Pydantic data models."""
 
-import pytest
 from src.models import (
     DEFAULT_SENDER_NAME,
+    EmailDraft,
+    NeedAnalysis,
+    OutreachRecord,
     ScrapedPage,
     ScrapedWebsite,
-    NeedAnalysis,
-    EmailDraft,
-    OutreachRecord,
     resolve_sender_name,
 )
 

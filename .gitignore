@@ -25,5 +25,15 @@ logs/
 *.swp
 *.swo
 
-# Claude Code local settings
+# Claude Code local settings and editor scratch
 .claude/
+.cursor/
+
+# Formatters and coverage
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# OS
+.DS_Store

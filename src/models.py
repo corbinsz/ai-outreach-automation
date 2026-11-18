@@ -1,16 +1,32 @@
-"""Pydantic models for structured data throughout the pipeline."""
+"""Records passed between scrape, analysis, draft, and send.
+
+Pydantic is the boundary on purpose. A malformed model response should fail
+when it is parsed, not halfway through an SMTP send.
+"""
 
 import os
-from pydantic import BaseModel, Field
-from typing import Optional
+from collections.abc import Callable
 from datetime import datetime
+
+from pydantic import BaseModel, Field
 
 # Neutral fallback when SENDER_NAME is unset and the caller passes no name.
 DEFAULT_SENDER_NAME = "Your Name"
 
+# Pinned so a library default cannot change the draft without a diff in this repo.
+# Replace the snapshot when Anthropic retires it. There is no fallback model.
+DEFAULT_MODEL = "claude-sonnet-4-5-20250929"
 
-def resolve_sender_name(sender_name: Optional[str] = None) -> str:
-    """Use an explicit name, then SENDER_NAME, then a neutral default."""
+ProgressCallback = Callable[[str], None]
+
+
+def resolve_sender_name(sender_name: str | None = None) -> str:
+    """Prefer an explicit name, then SENDER_NAME, then a neutral default.
+
+    The sign-off used to be a hard-coded brand. A personal project should
+    send as the person running it, and should still run if they have not
+    chosen a name yet.
+    """
     if sender_name and sender_name.strip():
         return sender_name.strip()
     configured = os.getenv("SENDER_NAME", "").strip()
@@ -18,15 +34,17 @@ def resolve_sender_name(sender_name: Optional[str] = None) -> str:
 
 
 class ScrapedPage(BaseModel):
-    """A single scraped page from a website."""
+    """One fetched page, already reduced to text."""
+
     url: str
     title: str = ""
     content: str = ""
-    page_type: str = "unknown"  # homepage, about, services, blog, contact, etc.
+    page_type: str = "unknown"
 
 
 class ScrapedWebsite(BaseModel):
-    """Complete scraped data from a prospect's website."""
+    """What the scraper managed to read. An empty pages list means the fetch failed."""
+
     base_url: str
     company_name: str = ""
     pages: list[ScrapedPage] = Field(default_factory=list)
@@ -35,7 +53,8 @@ class ScrapedWebsite(BaseModel):
 
 
 class NeedAnalysis(BaseModel):
-    """LLM-generated analysis of a prospect's needs."""
+    """Structured notes from Claude. Fields can be inferred, not observed. See the product notes."""
+
     company_name: str
     company_summary: str
     industry: str
@@ -47,7 +66,8 @@ class NeedAnalysis(BaseModel):
 
 
 class EmailDraft(BaseModel):
-    """A drafted outreach email."""
+    """A draft waiting for a person. to_address stays empty until send time."""
+
     to_address: str = ""
     subject: str
     body: str
@@ -55,17 +75,22 @@ class EmailDraft(BaseModel):
 
 
 class OutreachRecord(BaseModel):
-    """CRM-style log of an outreach attempt."""
+    """One row in the local JSON log.
+
+    opened_at and replied_at are filled by the UI, not by a tracking pixel.
+    Streamlit on a laptop is not a public endpoint, and a pixel would record
+    someone opening mail they did not ask for.
+    """
+
     timestamp: str = Field(default_factory=lambda: datetime.now().isoformat())
     prospect_url: str
     prospect_name: str
     recipient_email: str
     email_subject: str
     email_body: str
-    status: str = "drafted"  # drafted, sent, failed
-    error_message: Optional[str] = None
-    # --- Tracking & Follow-Up Fields ---
-    opened_at: Optional[str] = None       # ISO timestamp when marked opened
-    replied_at: Optional[str] = None      # ISO timestamp when marked replied
-    follow_up_date: Optional[str] = None  # ISO date (YYYY-MM-DD) for scheduled follow-up
-    notes: Optional[str] = None           # Free-text notes
+    status: str = "drafted"
+    error_message: str | None = None
+    opened_at: str | None = None
+    replied_at: str | None = None
+    follow_up_date: str | None = None
+    notes: str | None = None
