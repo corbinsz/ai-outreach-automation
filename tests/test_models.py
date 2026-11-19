@@ -166,6 +166,7 @@ class TestOutreachRecord:
         assert record.status == "sent"
         assert record.opened_at is None
         assert record.follow_up_date is None
+        assert record.id
 
 
 class TestResolveSenderName:

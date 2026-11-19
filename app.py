@@ -1,22 +1,37 @@
 """Local Streamlit UI for a personal outreach project.
 
 The page is a review desk. Scraping and drafting happen here, and mail
-leaves only after you press confirm. Styles live in assets/styles.css so
-this file stays the interaction logic.
+leaves only after you press confirm. Demo mode loads saved pages and a
+saved draft so the same desk works with no API key and no network.
+Styles live in assets/styles.css so this file stays the interaction logic.
 """
 
 import html as html_module
-import os
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import streamlit as st
 from dotenv import load_dotenv
 from src.agent import AgentConfig, OutreachAgent, PipelineResult
-from src.gmail_sender import get_outreach_log, update_outreach_record
-from src.models import DEFAULT_MODEL, EmailDraft, resolve_sender_name
+from src.config import (
+    ANTHROPIC_KEY_MESSAGE,
+    GMAIL_ADDRESS_PLACEHOLDERS,
+    GMAIL_MISSING_MESSAGE,
+    GMAIL_PASSWORD_PLACEHOLDERS,
+    anthropic_key_is_unset,
+    configure_logging,
+    gmail_is_unset,
+    is_unset,
+    load_settings,
+)
+from src.demo import DEMO_COMPANIES
+from src.gmail_sender import get_outreach_log, update_outreach_record, update_outreach_record_by_id
+from src.models import DEFAULT_MODEL, EmailDraft, OutreachRecord, resolve_sender_name
+from src.recipients import suggested_recipient
 
 load_dotenv()
+
+_logging_ready = False
 
 
 def esc(text: str) -> str:
@@ -28,7 +43,6 @@ def esc(text: str) -> str:
     return html_module.escape(str(text)) if text else ""
 
 
-# --- Page Config ---
 st.set_page_config(
     page_title="AI Outreach",
     page_icon="✉️",
@@ -36,7 +50,6 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# --- Custom Styling ---
 _STYLES_PATH = Path(__file__).resolve().parent / "assets" / "styles.css"
 
 
@@ -47,8 +60,6 @@ def _page_styles() -> str:
 
 st.markdown(f"<style>{_page_styles()}</style>", unsafe_allow_html=True)
 
-
-# --- SVG Icon Helpers ---
 SVG_TARGET = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>'
 SVG_BOOK = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>'
 SVG_ENVELOPE = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>'
@@ -69,26 +80,58 @@ def section_header(title: str, subtitle: str, svg: str, color: str) -> str:
     )
 
 
+def _state_str(key: str, default: str = "") -> str:
+    value = st.session_state.get(key, default)
+    return value if isinstance(value, str) else default
+
+
+def _state_bool(key: str, default: bool = False) -> bool:
+    value = st.session_state.get(key, default)
+    return bool(value) if isinstance(value, bool) else default
+
+
+def _state_int(key: str, default: int = 0) -> int:
+    value = st.session_state.get(key, default)
+    return value if isinstance(value, int) else default
+
+
 def init_session_state() -> None:
     """Seed widget state once.
 
     Streamlit reruns this script on every click. Defaults live here so a
-    rerun does not wipe a draft that is still being edited.
+    rerun does not wipe a draft that is still being edited. Placeholder
+    secrets from `.env.example` are treated as blank.
     """
-    defaults = {
+    settings = load_settings()
+    api_key = (
+        "" if anthropic_key_is_unset(settings.anthropic_api_key) else settings.anthropic_api_key
+    )
+    gmail_address = settings.gmail_address
+    if is_unset(gmail_address, GMAIL_ADDRESS_PLACEHOLDERS):
+        gmail_address = ""
+    gmail_password = settings.gmail_app_password
+    if is_unset(gmail_password, GMAIL_PASSWORD_PLACEHOLDERS):
+        gmail_password = ""
+    defaults: dict[str, object] = {
         "pipeline_result": None,
         "scrape_logs": [],
         "email_subject": "",
         "email_body": "",
         "pipeline_run_id": 0,
+        "draft_version": 0,
         "send_result": None,
+        "last_send_id": None,
+        "celebrated_send_id": None,
+        "form_error": None,
         "batch_results": [],
-        # Sidebar config defaults from env vars
-        "api_key": os.getenv("ANTHROPIC_API_KEY", ""),
-        "gmail_addr": os.getenv("GMAIL_ADDRESS", ""),
-        "gmail_pass": os.getenv("GMAIL_APP_PASSWORD", ""),
-        "sender_name": resolve_sender_name(),
+        "batch_error": None,
+        "prospect_url": "",
+        "api_key": api_key,
+        "gmail_addr": gmail_address,
+        "gmail_pass": gmail_password,
+        "sender_name": resolve_sender_name(settings.sender_name),
         "tone": "professional",
+        "demo_mode": settings.demo_mode,
     }
     for key, val in defaults.items():
         if key not in st.session_state:
@@ -102,20 +145,41 @@ def get_agent_config() -> AgentConfig:
     the draft without the change showing up in this repo.
     """
     return AgentConfig(
-        anthropic_api_key=st.session_state.get("api_key", ""),
-        gmail_address=st.session_state.get("gmail_addr", ""),
-        gmail_app_password=st.session_state.get("gmail_pass", ""),
-        sender_name=resolve_sender_name(st.session_state.get("sender_name")),
-        tone=st.session_state.get("tone", "professional"),
+        anthropic_api_key=_state_str("api_key"),
+        gmail_address=_state_str("gmail_addr"),
+        gmail_app_password=_state_str("gmail_pass"),
+        sender_name=resolve_sender_name(_state_str("sender_name")),
+        tone=_state_str("tone", "professional") or "professional",
         llm_model=DEFAULT_MODEL,
         use_playwright=True,
+        demo_mode=_state_bool("demo_mode"),
     )
 
 
+def _follow_up_day(record: OutreachRecord) -> str:
+    """Return the saved follow-up date, or an empty string when there is none."""
+    when = record.follow_up_date
+    return when if isinstance(when, str) else ""
+
+
+def _status_badge(record: OutreachRecord) -> tuple[str, str]:
+    """Return the short label and CSS class for one log row."""
+    if record.replied_at:
+        return "REPLIED", "status-replied"
+    if record.opened_at:
+        return "OPENED", "status-opened"
+    if record.status == "sent":
+        return "SENT", "status-sent"
+    if record.status == "demo_sent":
+        return "DEMO", "status-demo"
+    if record.status == "failed":
+        return "FAILED", "status-failed"
+    return "DRAFT", "status-draft"
+
+
 def render_sidebar() -> None:
-    """Sidebar for keys, Gmail, and tone. Nothing here is written to disk by the app."""
+    """Sidebar for demo mode, keys, Gmail, and tone. Nothing here is written to disk."""
     with st.sidebar:
-        # Sidebar title
         st.markdown(
             '<div class="sidebar-logo-block">'
             '<div class="sidebar-logo-mark">A</div>'
@@ -129,35 +193,59 @@ def render_sidebar() -> None:
 
         st.markdown("---")
         st.markdown('<p class="sidebar-section-label">Configuration</p>', unsafe_allow_html=True)
+        st.toggle(
+            "Demo mode",
+            key="demo_mode",
+            help=(
+                "Use the two sample companies saved in this repo. "
+                "No API key, no network, and Confirm writes a local practice row instead of email."
+            ),
+        )
+        if _state_bool("demo_mode"):
+            st.caption("Demo mode is on. The Anthropic key and Gmail settings are not used.")
+        else:
+            st.caption("Demo mode is off. Analysis needs an Anthropic key. Sending needs Gmail.")
 
+        key_label = (
+            "Anthropic API Key (not used in demo mode)"
+            if _state_bool("demo_mode")
+            else "Anthropic API Key (required)"
+        )
         st.text_input(
-            "Anthropic API Key (required)",
+            key_label,
             type="password",
             key="api_key",
-            help="Your Anthropic API key for Claude. Required for website analysis and email drafting.",
+            help="Your Anthropic API key for Claude. Required for a live website, not for demo mode.",
         )
 
         st.markdown("---")
         st.markdown('<p class="sidebar-section-label">Gmail Settings</p>', unsafe_allow_html=True)
         st.caption(
-            "Only needed when you're ready to send. Scraping and drafting work without these."
+            "Only needed when you send a real email. Demo mode never contacts Gmail. "
+            "Scraping and drafting work without these."
         )
 
         st.text_input(
             "Gmail Address",
             key="gmail_addr",
-            help="The Gmail address emails will be sent from.",
+            help="The Gmail address real emails will be sent from.",
         )
         st.text_input(
             "Gmail App Password",
             type="password",
             key="gmail_pass",
-            help="16-character App Password from Google Account > Security > App Passwords. This is NOT your Gmail login password.",
+            help=(
+                "16-character App Password from Google Account > Security > App Passwords. "
+                "This is NOT your Gmail login password."
+            ),
         )
         st.text_input(
             "Sender Name",
             key="sender_name",
-            help="The name recipients see on the From line. Set SENDER_NAME in .env to prefill this (for example, Jane Smith).",
+            help=(
+                "The name recipients see on the From line. "
+                "Set SENDER_NAME in .env to prefill this."
+            ),
         )
 
         st.markdown("---")
@@ -168,17 +256,43 @@ def render_sidebar() -> None:
             options=["professional", "conversational", "bold", "consultative"],
             index=0,
             key="tone",
-            help="Controls the writing style of the generated email. Professional = polished and direct. Conversational = warm and friendly. Bold = confident and pattern-interrupting. Consultative = insight-led and advisory.",
+            help=(
+                "Controls the writing style of the generated email. "
+                "In demo mode each tone has its own saved draft."
+            ),
         )
 
         st.markdown("---")
         st.markdown(
             '<div class="sidebar-footer">'
-            "Analysis runs on Claude.<br>"
+            "Live analysis runs on Claude.<br>"
             "Sending uses your own Gmail app password."
             "</div>",
             unsafe_allow_html=True,
         )
+
+
+def _show_scrape_log() -> None:
+    logs = st.session_state.get("scrape_logs", [])
+    with st.expander("Scraping Log — See what pages were discovered and fetched", expanded=False):
+        if isinstance(logs, list):
+            for log_line in logs:
+                if isinstance(log_line, str):
+                    st.text(log_line)
+
+
+def _advance(progress: st.delta_generator.DeltaGenerator, message: str) -> None:
+    """Move the bar from the pipeline's own progress lines."""
+    if message.startswith("Phase 1") or message.startswith("Demo mode: loading"):
+        progress.progress(15, text="Reading the site...")
+    elif "Loaded " in message or "Homepage scraped" in message or "Discovered" in message:
+        progress.progress(40, text="Reading the site...")
+    elif message.startswith("Phase 2"):
+        progress.progress(60, text="Writing notes...")
+    elif message.startswith("Phase 3"):
+        progress.progress(80, text="Drafting the email...")
+    elif "paused for review" in message or "sent successfully" in message:
+        progress.progress(100, text="Ready for review")
 
 
 def render_single_mode() -> None:
@@ -192,312 +306,398 @@ def render_single_mode() -> None:
         ),
         unsafe_allow_html=True,
     )
-    st.caption(
-        "Paste a company's website URL below. The app reads a few pages, asks Claude for notes, and drafts an email you can edit."
-    )
+    demo_mode = _state_bool("demo_mode")
+    if demo_mode:
+        st.caption(
+            "Demo mode reads two companies saved in this repo. "
+            "Pick one, or paste its URL. A live URL is refused until you turn demo mode off."
+        )
+        columns = st.columns(len(DEMO_COMPANIES))
+        for column, company in zip(columns, DEMO_COMPANIES, strict=True):
+            with column:
+                st.markdown(f"**{esc(company.name)}**")
+                st.caption(company.blurb)
+                if st.button(
+                    "Run this sample",
+                    key=f"demo_{company.slug}",
+                    use_container_width=True,
+                ):
+                    st.session_state["prospect_url"] = company.url
+                    st.session_state["run_requested"] = True
+                    st.rerun()
+    else:
+        st.caption(
+            "Paste a company's website URL below. The app reads a few pages, "
+            "asks Claude for notes, and drafts an email you can edit."
+        )
 
     col1, col2 = st.columns([3, 1])
     with col1:
         url = st.text_input(
             "Prospect Website URL",
-            placeholder="https://example.com",
-            help="The homepage of the company. The scraper follows a few internal links such as About, Services, and Blog.",
+            key="prospect_url",
+            placeholder="https://northwind.example" if demo_mode else "https://example.com",
+            help=(
+                "In demo mode use https://northwind.example or https://harborpine.example. "
+                "Live mode reads the homepage and a few internal pages such as About and Services."
+            ),
         )
     with col2:
         st.markdown("<br>", unsafe_allow_html=True)
-        run_clicked = st.button("Run Pipeline", type="primary", use_container_width=True)
+        run_clicked = st.button(
+            "Run Pipeline",
+            type="primary",
+            use_container_width=True,
+            key="run_pipeline",
+        )
 
-    if run_clicked and url:
+    if st.session_state.pop("run_requested", False):
+        run_clicked = True
+
+    if run_clicked:
         config = get_agent_config()
-        if not config.anthropic_api_key:
-            st.error("Please enter your Anthropic API key in the sidebar.")
-            return
+        if not url.strip():
+            st.session_state["form_error"] = (
+                "Enter a website URL. In demo mode, run Northwind Analytics or Harbor & Pine."
+            )
+        elif not config.demo_mode and anthropic_key_is_unset(config.anthropic_api_key):
+            st.session_state["form_error"] = ANTHROPIC_KEY_MESSAGE
+        else:
+            st.session_state["form_error"] = None
+            st.session_state["send_result"] = None
+            st.session_state["last_send_id"] = None
+            logs: list[str] = []
+            st.session_state["scrape_logs"] = logs
+            progress_bar = st.progress(5, text="Starting...")
+            status_placeholder = st.empty()
 
-        agent = OutreachAgent(config)
-        st.session_state["scrape_logs"] = []
-        st.session_state["send_result"] = None
+            def progress_cb(msg: str) -> None:
+                logs.append(msg)
+                status_placeholder.text(msg)
+                _advance(progress_bar, msg)
 
-        progress_container = st.container()
-        status_placeholder = progress_container.empty()
-        progress_bar = progress_container.progress(0)
+            agent = OutreachAgent(config)
+            ran = agent.run_pipeline(url=url.strip(), progress_callback=progress_cb)
+            st.session_state["pipeline_result"] = ran
+            st.session_state["pipeline_run_id"] = _state_int("pipeline_run_id") + 1
+            if ran.draft is not None:
+                st.session_state["email_subject"] = ran.draft.subject
+                st.session_state["email_body"] = ran.draft.body
+                # A new widget key lets the text fields pick up this draft.
+                # Reusing the old key would keep the previous text.
+                st.session_state["draft_version"] = _state_int("draft_version") + 1
+            if ran.error:
+                st.session_state["form_error"] = ran.error
+            progress_bar.progress(100, text="Done" if ran.stage != "failed" else "Stopped")
 
-        logs = st.session_state["scrape_logs"]
+    form_error = st.session_state.get("form_error")
+    if isinstance(form_error, str) and form_error:
+        st.error(form_error)
 
-        def progress_cb(msg: str):
-            logs.append(msg)
-            status_placeholder.text(msg)
-
-        # Phase 1: Scrape
-        progress_bar.progress(10, "Scraping website...")
-        result = PipelineResult(url=url)
-
-        try:
-            result.scraped = agent.scrape(url, progress_callback=progress_cb)
-            if not result.scraped.pages:
-                st.error("Failed to scrape any content from the website.")
-                return
-            progress_bar.progress(35, "Scraping complete")
-
-            # Phase 2: Analyze
-            progress_bar.progress(40, "Analyzing prospect needs...")
-            status_placeholder.text("Analyzing prospect needs with Claude...")
-            result.analysis = agent.analyze(result.scraped)
-            progress_bar.progress(65, "Analysis complete")
-
-            # Phase 3: Draft
-            progress_bar.progress(70, "Drafting outreach email...")
-            status_placeholder.text("Drafting personalized email...")
-            result.draft = agent.draft(result.analysis)
-            progress_bar.progress(100, "Pipeline complete")
-            status_placeholder.text("Pipeline complete — review results below")
-
-            result.stage = "reviewing"
-
-        except Exception as e:
-            st.error(f"Pipeline error: {e}")
-            result.error = str(e)
-            result.stage = "failed"
-            return
-
-        st.session_state["pipeline_result"] = result
-        st.session_state["email_subject"] = result.draft.subject
-        st.session_state["email_body"] = result.draft.body
-        st.session_state["pipeline_run_id"] = st.session_state.get("pipeline_run_id", 0) + 1
-
-    # --- Display Results ---
-    result: PipelineResult | None = st.session_state.get("pipeline_result")
-    if not result:
+    stored = st.session_state.get("pipeline_result")
+    result = stored if isinstance(stored, PipelineResult) else None
+    if result is None:
         st.info(
-            "Enter a prospect's website URL above and click **Run Pipeline** to start. Nothing is scraped until you do, and nothing is sent until you confirm."
+            "Enter a prospect's website URL above and click **Run Pipeline** to start. "
+            "Nothing is scraped until you do, and nothing is sent until you confirm."
         )
         return
 
-    # Scraping log (collapsible)
-    with st.expander("Scraping Log — See what pages were discovered and fetched", expanded=False):
-        for log_line in st.session_state.get("scrape_logs", []):
-            st.text(log_line)
+    _show_scrape_log()
+    if result.stage == "failed":
+        return
 
-    # Analysis Results
     if result.analysis:
         st.markdown("---")
         st.markdown(
             section_header(
-                "Prospect Analysis", "AI-powered insights from scraped content", SVG_BOOK, "purple"
+                "Prospect Analysis",
+                "Notes from the saved sample" if demo_mode else "Notes from the scraped pages",
+                SVG_BOOK,
+                "purple",
             ),
             unsafe_allow_html=True,
         )
+        if result.scraped is not None and len(result.scraped.raw_text_summary) < 400:
+            st.warning(
+                "These pages did not have much text. Treat the notes as inferences, not quotes."
+            )
 
-        # Company Overview Card
-        a = result.analysis
+        analysis = result.analysis
         industry_tag = (
-            f'<span class="tag-pill tag-industry">{esc(a.industry)}</span>' if a.industry else ""
+            f'<span class="tag-pill tag-industry">{esc(analysis.industry)}</span>'
+            if analysis.industry
+            else ""
         )
         overview_html = (
             f'<div class="styled-card">'
             f'<div class="overview-grid">'
-            f'<div><div class="overview-label">Company</div><div class="overview-value">{esc(a.company_name)}</div></div>'
-            f'<div><div class="overview-label">Industry</div><div class="overview-value">{industry_tag}</div></div>'
+            f'<div><div class="overview-label">Company</div>'
+            f'<div class="overview-value">{esc(analysis.company_name)}</div></div>'
+            f'<div><div class="overview-label">Industry</div>'
+            f'<div class="overview-value">{industry_tag}</div></div>'
             f"</div>"
             f'<div style="margin-top:0.75rem;"><div class="overview-label">Summary</div>'
-            f'<div class="overview-value">{esc(a.company_summary)}</div></div>'
+            f'<div class="overview-value">{esc(analysis.company_summary)}</div></div>'
             f"</div>"
         )
         st.markdown(overview_html, unsafe_allow_html=True)
 
         col_a, col_b = st.columns(2)
-
         with col_a:
-            # Services as tag pills
-            if a.services_offered:
-                services_html = '<div class="styled-card"><div class="overview-label">Services</div><div style="margin-top:0.4rem;">'
-                for s in a.services_offered:
-                    services_html += f'<span class="tag-pill">{esc(s)}</span>'
+            if analysis.services_offered:
+                services_html = (
+                    '<div class="styled-card"><div class="overview-label">Services</div>'
+                    '<div style="margin-top:0.4rem;">'
+                )
+                for service in analysis.services_offered:
+                    services_html += f'<span class="tag-pill">{esc(service)}</span>'
                 services_html += "</div></div>"
                 st.markdown(services_html, unsafe_allow_html=True)
-
-            # Pain Points
-            if a.pain_points:
-                pain_html = '<div class="overview-label" style="margin-top:0.5rem;">Pain Points</div><div class="item-list">'
-                for p in a.pain_points:
-                    pain_html += f'<div class="item-pain"><div class="dot-red"></div><div>{esc(p)}</div></div>'
+            if analysis.pain_points:
+                pain_html = (
+                    '<div class="overview-label" style="margin-top:0.5rem;">Pain Points</div>'
+                    '<div class="item-list">'
+                )
+                for pain in analysis.pain_points:
+                    pain_html += f'<div class="item-pain"><div class="dot-red"></div><div>{esc(pain)}</div></div>'
                 pain_html += "</div>"
                 st.markdown(pain_html, unsafe_allow_html=True)
-
         with col_b:
-            # AI Opportunities
-            if a.ai_opportunities:
+            if analysis.ai_opportunities:
                 opp_html = (
                     '<div class="overview-label">AI Opportunities</div><div class="item-list">'
                 )
-                for o in a.ai_opportunities:
-                    opp_html += f'<div class="item-opp"><div class="dot-green"></div><div>{esc(o)}</div></div>'
+                for opportunity in analysis.ai_opportunities:
+                    opp_html += (
+                        f'<div class="item-opp"><div class="dot-green"></div>'
+                        f"<div>{esc(opportunity)}</div></div>"
+                    )
                 opp_html += "</div>"
                 st.markdown(opp_html, unsafe_allow_html=True)
 
-        # Value Proposition card
-        if a.value_proposition:
+        if analysis.value_proposition:
             vp_html = (
                 f'<div class="styled-card-accent">'
                 f'<div class="overview-label">Value Proposition</div>'
-                f'<div class="overview-value">{esc(a.value_proposition)}</div>'
+                f'<div class="overview-value">{esc(analysis.value_proposition)}</div>'
             )
-            if a.recommended_angle:
+            if analysis.recommended_angle:
                 vp_html += (
                     f'<div style="margin-top:0.75rem;">'
                     f'<div class="overview-label">Recommended Angle</div>'
-                    f'<div class="overview-value" style="font-style:italic;">{esc(a.recommended_angle)}</div>'
-                    f"</div>"
+                    f'<div class="overview-value" style="font-style:italic;">'
+                    f"{esc(analysis.recommended_angle)}</div></div>"
                 )
             vp_html += "</div>"
             st.markdown(vp_html, unsafe_allow_html=True)
 
-    # Email Draft (editable)
     if result.draft:
         st.markdown("---")
         st.markdown(
             section_header("Email Draft", "Review and edit before sending", SVG_ENVELOPE, "green"),
             unsafe_allow_html=True,
         )
-        st.caption(
-            "This email was generated based on the analysis above. Edit anything you'd like before sending — or click Regenerate for a new version."
+        if demo_mode:
+            st.caption(
+                "This draft was loaded from the repo, not from a live model call. "
+                "Edit it, change the tone and regenerate, or confirm a practice send. "
+                "Confirm does not email anyone."
+            )
+        else:
+            st.caption(
+                "This email was generated from the notes above. "
+                "Edit it before sending, or regenerate it."
+            )
+
+        version = _state_int("draft_version")
+        edited_subject = st.text_input(
+            "Subject",
+            value=_state_str("email_subject"),
+            key=f"subject_{version}",
         )
-
-        edited_subject = st.text_input("Subject", value=st.session_state["email_subject"])
-        edited_body = st.text_area("Body", value=st.session_state["email_body"], height=300)
-
+        edited_body = st.text_area(
+            "Body",
+            value=_state_str("email_body"),
+            key=f"body_{version}",
+            height=300,
+        )
         st.session_state["email_subject"] = edited_subject
         st.session_state["email_body"] = edited_body
 
-        # Send Section
         st.markdown("---")
         st.markdown(
-            section_header("Send Email", "Deliver via Gmail SMTP", SVG_SEND, "orange"),
+            section_header(
+                "Send Email",
+                "Practice send, saved locally" if demo_mode else "Deliver via Gmail SMTP",
+                SVG_SEND,
+                "orange",
+            ),
             unsafe_allow_html=True,
         )
-        st.caption(
-            "Nothing is sent until you press Confirm. Use your own Gmail account, "
-            "and only email someone you have a reason to contact. You are responsible "
-            "for identifying yourself and honoring opt-outs."
-        )
-
-        # Show scraped contact emails if available
-        default_to = ""
-        if result.scraped and result.scraped.contact_emails:
-            emails = result.scraped.contact_emails
-            default_to = emails[0]
-            st.success(
-                f"Found {len(emails)} contact email(s) on their website: **{', '.join(emails)}**"
+        if demo_mode:
+            st.caption(
+                "Confirm writes a row to the local log and stops. " "No SMTP connection is opened."
             )
         else:
-            st.caption("No contact emails found on the website — enter one manually.")
+            st.caption(
+                "Nothing is sent until you press Confirm. Use your own Gmail account, "
+                "and only email someone you have a reason to contact. You are responsible "
+                "for identifying yourself and honoring opt-outs."
+            )
 
-        # Dynamic key forces a fresh widget each pipeline run so value= is respected
-        run_id = st.session_state.get("pipeline_run_id", 0)
+        found = result.scraped.contact_emails if result.scraped is not None else []
+        default_to = suggested_recipient(found, demo_mode=demo_mode)
+        if found and demo_mode:
+            st.success(
+                "Sample address, not a real inbox: **"
+                + ", ".join(found)
+                + "**. Confirming records a practice send only."
+            )
+        elif found:
+            st.info(
+                f"Found {len(found)} address(es) on the site: **{', '.join(found)}**. "
+                "The To field is blank so you choose the recipient. "
+                "The first address on a page is often a shared inbox."
+            )
+        else:
+            st.caption("No contact emails found on the website. Enter one manually.")
+
+        run_id = _state_int("pipeline_run_id")
         to_address = st.text_input(
             "Recipient Email Address",
             value=default_to,
             key=f"to_address_{run_id}",
             placeholder="prospect@company.com",
-            help="The email address of the person you want to reach out to at this company.",
+            help="Who should receive this one email. Demo mode will not deliver it.",
         )
 
         col_send, col_regen = st.columns(2)
-
         with col_regen:
-            if st.button("Regenerate Draft", use_container_width=True):
+            if st.button("Regenerate Draft", use_container_width=True, key="regenerate_draft"):
                 config = get_agent_config()
-                agent = OutreachAgent(config)
-                with st.spinner("Regenerating email..."):
-                    new_draft = agent.draft(result.analysis)
-                st.session_state["email_subject"] = new_draft.subject
-                st.session_state["email_body"] = new_draft.body
-                result.draft = new_draft
-                st.rerun()
+                if result.analysis is None:
+                    st.error("There are no notes to draft from. Run the pipeline again.")
+                elif not config.demo_mode and anthropic_key_is_unset(config.anthropic_api_key):
+                    st.error(ANTHROPIC_KEY_MESSAGE)
+                else:
+                    try:
+                        new_draft = OutreachAgent(config).draft(result.analysis)
+                    except Exception as exc:
+                        st.error(f"Could not regenerate the draft: {exc}")
+                    else:
+                        st.session_state["email_subject"] = new_draft.subject
+                        st.session_state["email_body"] = new_draft.body
+                        st.session_state["draft_version"] = version + 1
+                        st.session_state["send_result"] = None
+                        st.session_state["last_send_id"] = None
+                        result.draft = new_draft
+                        st.session_state["pipeline_result"] = result
+                        st.rerun()
 
         with col_send:
             send_clicked = st.button(
-                "Confirm & Send",
+                "Confirm & Send" if not demo_mode else "Confirm practice send",
                 type="primary",
                 use_container_width=True,
-                disabled=not to_address,
+                disabled=not to_address.strip(),
+                key="confirm_send",
             )
 
-        if send_clicked and to_address:
+        if send_clicked and to_address.strip():
             config = get_agent_config()
-
-            if not config.gmail_address or not config.gmail_app_password:
-                st.error(
-                    "Enter your Gmail address and app password in the sidebar before sending. "
-                    "The app keeps them in this Streamlit session. It does not write them to a file."
-                )
-                return
-
-            # Build final draft with edits
-            final_draft = EmailDraft(
-                subject=st.session_state["email_subject"],
-                body=st.session_state["email_body"],
-                to_address=to_address,
-                tone=config.tone,
-            )
-
-            agent = OutreachAgent(config)
-
-            with st.spinner("Sending email..."):
-                send_result = agent.send(
-                    draft=final_draft,
-                    to_address=to_address,
-                    prospect_url=result.url,
-                    prospect_name=result.analysis.company_name if result.analysis else "",
-                )
-
-            st.session_state["send_result"] = send_result
-
-            if send_result.status == "sent":
-                st.success(f"Email sent successfully to {to_address}!")
+            if not config.demo_mode and gmail_is_unset(
+                config.gmail_address, config.gmail_app_password
+            ):
+                st.error(GMAIL_MISSING_MESSAGE)
             else:
-                st.error(f"Failed to send: {send_result.error_message}")
+                final_draft = EmailDraft(
+                    subject=_state_str("email_subject"),
+                    body=_state_str("email_body"),
+                    to_address=to_address.strip(),
+                    tone=config.tone,
+                )
+                with st.spinner("Saving..." if config.demo_mode else "Sending email..."):
+                    sent = OutreachAgent(config).send(
+                        draft=final_draft,
+                        to_address=to_address.strip(),
+                        prospect_url=result.url,
+                        prospect_name=result.analysis.company_name if result.analysis else "",
+                    )
+                st.session_state["send_result"] = sent
+                st.session_state["last_send_id"] = sent.id
+                st.session_state["celebrated_send_id"] = None
 
-    # Show send result if exists
-    send_result = st.session_state.get("send_result")
-    if send_result and send_result.status == "sent":
-        st.balloons()
+    stored_send = st.session_state.get("send_result")
+    if not isinstance(stored_send, OutreachRecord):
+        return
+    send_result = stored_send
 
-        # --- Post-Send Follow-Up Scheduling ---
-        st.markdown("---")
-        st.markdown(
-            section_header(
-                "Schedule Follow-Up", "Set a reminder to follow up", SVG_CALENDAR, "orange"
-            ),
-            unsafe_allow_html=True,
+    if send_result.status == "sent":
+        if st.session_state.get("celebrated_send_id") != send_result.id:
+            st.balloons()
+            st.session_state["celebrated_send_id"] = send_result.id
+        st.success(f"Email sent to {send_result.recipient_email}.")
+    elif send_result.status == "demo_sent":
+        st.success(
+            "Practice send saved in the local log. "
+            f"No email was sent to {send_result.recipient_email}."
         )
-        st.caption(
-            "Optionally schedule a follow-up date for this email. You can manage follow-ups from the Follow-Ups tab."
+    elif send_result.status == "failed":
+        st.error(send_result.error_message or "The send failed.")
+        return
+
+    if send_result.status not in {"sent", "demo_sent"}:
+        return
+
+    st.markdown("---")
+    st.markdown(
+        section_header(
+            "Schedule Follow-Up",
+            "Set a reminder on this send",
+            SVG_CALENDAR,
+            "orange",
+        ),
+        unsafe_allow_html=True,
+    )
+    st.caption(
+        "The date is saved on this send's id, not on whatever row happens to be last in the file."
+    )
+    fu_col1, fu_col2 = st.columns([1, 2])
+    with fu_col1:
+        fu_date = st.date_input(
+            "Follow-up date",
+            value=date.today() + timedelta(days=3),
+            key="post_send_fu_date",
+        )
+    with fu_col2:
+        fu_note = st.text_input(
+            "Note (optional)",
+            key="post_send_fu_note",
+            placeholder="e.g. Check if they wrote back",
         )
 
-        fu_col1, fu_col2 = st.columns([1, 2])
-        with fu_col1:
-            fu_date = st.date_input(
-                "Follow-up date",
-                value=date.today() + timedelta(days=3),
-                key="post_send_fu_date",
-            )
-        with fu_col2:
-            fu_note = st.text_input(
-                "Note (optional)",
-                key="post_send_fu_note",
-                placeholder="e.g. Check if they opened it",
-            )
-
-        if st.button("Save Follow-Up", key="post_send_fu_save"):
-            # Find the most recent record matching this send
-            records = get_outreach_log()
-            if records:
-                last_idx = len(records) - 1
-                updates = {"follow_up_date": fu_date.isoformat()}
-                if fu_note:
-                    updates["notes"] = fu_note
-                update_outreach_record(last_idx, **updates)
-                st.success(f"Follow-up scheduled for {fu_date.isoformat()}")
+    if st.button("Save Follow-Up", key="post_send_fu_save"):
+        record_id = _state_str("last_send_id")
+        chosen = fu_date if isinstance(fu_date, date) else date.today()
+        if not record_id:
+            st.error("This send has no id, so the follow-up was not saved.")
+        else:
+            updates: dict[str, object] = {"follow_up_date": chosen.isoformat()}
+            note = fu_note.strip()
+            if note:
+                current = next(
+                    (row for row in get_outreach_log() if row.id == record_id),
+                    None,
+                )
+                existing = current.notes if current is not None and current.notes else ""
+                updates["notes"] = f"{existing}\n{note}".strip() if existing else note
+            try:
+                update_outreach_record_by_id(record_id, **updates)
+            except KeyError:
+                st.error("That send is no longer in the local log, so the follow-up was not saved.")
+            else:
+                st.success(f"Follow-up scheduled for {chosen.isoformat()}.")
 
 
 def render_batch_mode() -> None:
@@ -506,101 +706,118 @@ def render_batch_mode() -> None:
         section_header("Batch Mode", "Process multiple prospects at once", SVG_GRID, "blue"),
         unsafe_allow_html=True,
     )
-    st.caption(
-        "Process multiple prospect URLs at once. Each one goes through the full pipeline (scrape, analyze, draft). Emails are drafted but NOT auto-sent — you review each one individually."
-    )
+    demo_mode = _state_bool("demo_mode")
+    if demo_mode:
+        sample_urls = " and ".join(company.url for company in DEMO_COMPANIES)
+        st.caption(
+            "Batch mode drafts only. It never sends. "
+            f"Demo mode accepts only the sample companies: {sample_urls}."
+        )
+    else:
+        st.caption(
+            "Each URL is scraped, analyzed, and drafted. "
+            "Nothing is sent from this tab. Review each draft here, then send it from Single Outreach if you still want to."
+        )
 
     urls_text = st.text_area(
         "Enter URLs (one per line)",
-        placeholder="https://company1.com\nhttps://company2.com\nhttps://company3.com",
+        placeholder=(
+            "https://northwind.example\nhttps://harborpine.example"
+            if demo_mode
+            else "https://company1.com\nhttps://company2.com\nhttps://company3.com"
+        ),
         height=150,
+        key="batch_urls",
     )
 
-    if st.button("Run Batch Pipeline", type="primary"):
-        urls = [u.strip() for u in urls_text.strip().splitlines() if u.strip()]
-        if not urls:
-            st.warning("Please enter at least one URL.")
-            return
-
+    if st.button("Run Batch Pipeline", type="primary", key="run_batch"):
+        urls = [line.strip() for line in urls_text.splitlines() if line.strip()]
         config = get_agent_config()
-        if not config.anthropic_api_key:
-            st.error("Please enter your Anthropic API key in the sidebar.")
-            return
+        if not urls:
+            st.session_state["batch_error"] = "Enter at least one URL."
+        elif not config.demo_mode and anthropic_key_is_unset(config.anthropic_api_key):
+            st.session_state["batch_error"] = ANTHROPIC_KEY_MESSAGE
+        else:
+            st.session_state["batch_error"] = None
+            progress_bar = st.progress(0, text="Starting batch...")
+            status = st.empty()
 
-        agent = OutreachAgent(config)
-        batch_results = []
+            def on_progress(msg: str) -> None:
+                status.text(msg)
+                if msg.startswith("Phase 1") or "Processing" in msg:
+                    progress_bar.progress(30, text=msg[:80])
+                elif msg.startswith("Phase 3") or "paused for review" in msg:
+                    progress_bar.progress(80, text="Drafting...")
 
-        progress_bar = st.progress(0)
-        status = st.empty()
+            batch_results = OutreachAgent(config).run_batch(urls, progress_callback=on_progress)
+            progress_bar.progress(100, text="Batch complete")
+            status.text(f"Processed {len(urls)} prospects. Drafts only. Nothing was sent.")
+            st.session_state["batch_results"] = batch_results
 
-        for i, url in enumerate(urls):
-            status.text(f"Processing {i + 1}/{len(urls)}: {url}")
-            progress_bar.progress(i / len(urls))
-            # run_pipeline records its own failures and continues to the next URL.
-            batch_results.append(agent.run_pipeline(url=url))
+    batch_error = st.session_state.get("batch_error")
+    if isinstance(batch_error, str) and batch_error:
+        st.error(batch_error)
 
-        progress_bar.progress(1.0, "Batch complete")
-        status.text(f"Processed {len(urls)} prospects")
-        st.session_state["batch_results"] = batch_results
+    stored_batch = st.session_state.get("batch_results", [])
+    batch_results = stored_batch if isinstance(stored_batch, list) else []
+    if not batch_results:
+        return
 
-    # Display batch results
-    batch_results = st.session_state.get("batch_results", [])
-    if batch_results:
-        st.markdown("---")
-        for i, result in enumerate(batch_results):
-            status_label = "[OK]" if result.stage == "reviewing" else "[FAILED]"
-            label_name = result.analysis.company_name if result.analysis else result.url
-            with st.expander(
-                f"{status_label} {label_name}",
-                expanded=(i == 0),
-            ):
-                if result.error:
-                    st.error(f"Error: {result.error}")
-                    continue
-
-                if result.analysis:
-                    st.markdown(f"**Industry:** {result.analysis.industry}")
-                    st.markdown(f"**Summary:** {result.analysis.company_summary}")
-                    st.markdown(
-                        f"**Key Pain Point:** {result.analysis.pain_points[0] if result.analysis.pain_points else 'N/A'}"
-                    )
-
-                if result.draft:
-                    st.markdown(f"**Email Subject:** {result.draft.subject}")
-                    st.text_area(
-                        "Email Body",
-                        value=result.draft.body,
-                        height=200,
-                        key=f"batch_body_{i}",
-                    )
+    st.markdown("---")
+    for index, item in enumerate(batch_results):
+        if not isinstance(item, PipelineResult):
+            continue
+        status_label = "[OK]" if item.stage == "reviewing" else "[FAILED]"
+        label_name = item.analysis.company_name if item.analysis else item.url
+        with st.expander(f"{status_label} {label_name}", expanded=(index == 0)):
+            if item.error:
+                st.error(item.error)
+                continue
+            if item.analysis:
+                st.markdown(f"**Industry:** {item.analysis.industry}")
+                st.markdown(f"**Summary:** {item.analysis.company_summary}")
+                pain = item.analysis.pain_points[0] if item.analysis.pain_points else "N/A"
+                st.markdown(f"**Key Pain Point:** {pain}")
+            if item.draft:
+                st.markdown(f"**Email Subject:** {item.draft.subject}")
+                st.text_area(
+                    "Email Body",
+                    value=item.draft.body,
+                    height=200,
+                    key=f"batch_body_{index}",
+                )
 
 
 def render_outreach_log() -> None:
     """Local log of sends. Opened and replied are checkboxes you set, not pixel events."""
     st.markdown(
-        section_header("Outreach Log", "CRM-style history with tracking", SVG_DOC, "purple"),
+        section_header(
+            "Outreach Log", "Local history of sends and practice rows", SVG_DOC, "purple"
+        ),
         unsafe_allow_html=True,
     )
     st.caption(
-        "Track every outreach email — mark as opened/replied, schedule follow-ups, and add notes."
+        "Real sends and demo practice rows are listed together. "
+        "A DEMO row was not emailed. Opened, replied, and follow-up are marks you set yourself."
     )
 
     records = get_outreach_log()
-
     if not records:
-        st.info("No outreach attempts logged yet. Send an email to see it here.")
+        st.info(
+            "No outreach attempts logged yet. Send an email, or confirm a demo send, to see it here."
+        )
         return
 
-    # --- Summary Metrics ---
     total = len(records)
-    sent = sum(1 for r in records if r.status == "sent")
-    opened = sum(1 for r in records if r.opened_at)
-    replied = sum(1 for r in records if r.replied_at)
+    sent = sum(1 for record in records if record.status == "sent")
+    demo_sent = sum(1 for record in records if record.status == "demo_sent")
+    opened = sum(1 for record in records if record.opened_at)
+    replied = sum(1 for record in records if record.replied_at)
     today_str = date.today().isoformat()
     due_follow_ups = sum(
         1
-        for r in records
-        if r.follow_up_date and r.follow_up_date <= today_str and not r.replied_at
+        for record in records
+        if record.follow_up_date and record.follow_up_date <= today_str and not record.replied_at
     )
 
     m1, m2, m3, m4, m5 = st.columns(5)
@@ -609,38 +826,23 @@ def render_outreach_log() -> None:
     m3.metric("Opened", opened)
     m4.metric("Replied", replied)
     m5.metric("Due Follow-Ups", due_follow_ups)
+    if demo_sent:
+        st.caption(f"{demo_sent} practice row(s) from demo mode are not counted as sent.")
 
     st.markdown("---")
-
-    # --- Record List ---
     for idx, record in enumerate(records):
-        # Determine best status badge
-        if record.replied_at:
-            status_html = '<span class="status-replied">REPLIED</span>'
-            badge = "REPLIED"
-        elif record.opened_at:
-            status_html = '<span class="status-opened">OPENED</span>'
-            badge = "OPENED"
-        elif record.status == "sent":
-            status_html = '<span class="status-sent">SENT</span>'
-            badge = "SENT"
-        elif record.status == "failed":
-            status_html = '<span class="status-failed">FAILED</span>'
-            badge = "FAILED"
-        else:
-            status_html = '<span class="status-draft">DRAFT</span>'
-            badge = "DRAFT"
-
-        # Follow-up indicator for expander label
+        badge, css_class = _status_badge(record)
+        status_html = f'<span class="{css_class}">{badge}</span>'
         fu_label = ""
         if record.follow_up_date and not record.replied_at:
             if record.follow_up_date <= today_str:
                 fu_label = " | FOLLOW-UP DUE"
             else:
                 fu_label = f" | Follow-up: {record.follow_up_date}"
-
-        expander_label = f"{badge} | {record.prospect_name or record.prospect_url} → {record.recipient_email}{fu_label}"
-
+        expander_label = (
+            f"{badge} | {record.prospect_name or record.prospect_url} "
+            f"→ {record.recipient_email}{fu_label}"
+        )
         with st.expander(expander_label):
             st.markdown(status_html, unsafe_allow_html=True)
             col1, col2, col3 = st.columns(3)
@@ -648,7 +850,6 @@ def render_outreach_log() -> None:
             col2.metric("Recipient", record.recipient_email)
             col3.metric("Time", record.timestamp[:19])
 
-            # Follow-up date display
             if record.follow_up_date and not record.replied_at:
                 if record.follow_up_date <= today_str:
                     days_overdue = (date.today() - date.fromisoformat(record.follow_up_date)).days
@@ -664,21 +865,20 @@ def render_outreach_log() -> None:
 
             st.markdown(f"**Subject:** {record.email_subject}")
             st.text_area(
-                "Body", value=record.email_body, height=150, key=f"log_body_{idx}", disabled=True
+                "Body",
+                value=record.email_body,
+                height=150,
+                key=f"log_body_{idx}",
+                disabled=True,
             )
-
             if record.error_message:
-                st.error(f"Error: {record.error_message}")
-
-            # Notes display
+                st.error(record.error_message)
             if record.notes:
                 st.markdown(f"**Notes:** {record.notes}")
 
-            # --- Tracking Actions (only for sent emails) ---
-            if record.status == "sent":
+            if record.status in {"sent", "demo_sent"}:
                 st.markdown("---")
                 act_cols = st.columns(4)
-
                 with act_cols[0]:
                     if not record.opened_at:
                         if st.button("Mark as Opened", key=f"open_{idx}"):
@@ -686,7 +886,6 @@ def render_outreach_log() -> None:
                             st.rerun()
                     else:
                         st.caption(f"Opened: {record.opened_at[:19]}")
-
                 with act_cols[1]:
                     if not record.replied_at:
                         if st.button("Mark as Replied", key=f"reply_{idx}"):
@@ -694,7 +893,6 @@ def render_outreach_log() -> None:
                             st.rerun()
                     else:
                         st.caption(f"Replied: {record.replied_at[:19]}")
-
                 with act_cols[2]:
                     if not record.follow_up_date and not record.replied_at:
                         fu_date = st.date_input(
@@ -703,12 +901,14 @@ def render_outreach_log() -> None:
                             key=f"fu_date_{idx}",
                         )
                         if st.button("Set Follow-Up", key=f"fu_set_{idx}"):
-                            update_outreach_record(idx, follow_up_date=fu_date.isoformat())
+                            chosen = fu_date if isinstance(fu_date, date) else date.today()
+                            update_outreach_record(idx, follow_up_date=chosen.isoformat())
                             st.rerun()
-
                 with act_cols[3]:
                     new_note = st.text_input(
-                        "Add note", key=f"note_input_{idx}", placeholder="e.g. Spoke with VP"
+                        "Add note",
+                        key=f"note_input_{idx}",
+                        placeholder="e.g. Spoke with the founder",
                     )
                     if st.button("Save Note", key=f"note_save_{idx}") and new_note:
                         existing = record.notes or ""
@@ -721,47 +921,48 @@ def render_follow_up_dashboard() -> None:
     """Dates you set yourself. There is no mail-server clock behind this list."""
     st.markdown(
         section_header(
-            "Follow-Up Dashboard", "Upcoming and overdue follow-ups", SVG_CALENDAR, "orange"
+            "Follow-Up Dashboard",
+            "Upcoming and overdue follow-ups",
+            SVG_CALENDAR,
+            "orange",
         ),
         unsafe_allow_html=True,
     )
     st.caption(
-        "Track scheduled follow-ups. Overdue items appear first. Snooze or mark as replied to manage your pipeline."
+        "Dates you saved on a send. Overdue items appear first. "
+        "Snooze and mark replied change the local log only."
     )
 
     records = get_outreach_log()
     today = date.today()
     today_str = today.isoformat()
-
-    # Filter to records with follow-up dates that haven't been replied to
     follow_ups = [
-        (idx, r) for idx, r in enumerate(records) if r.follow_up_date and not r.replied_at
+        (idx, record)
+        for idx, record in enumerate(records)
+        if record.follow_up_date and not record.replied_at
     ]
-
     if not follow_ups:
         st.info(
-            "No follow-ups scheduled. Send emails and set follow-up dates from the Outreach Log tab."
+            "No follow-ups scheduled. Send an email, or confirm a demo send, "
+            "and set a follow-up date from the Outreach Log tab."
         )
         return
 
-    # Split into overdue and upcoming
-    overdue = [(i, r) for i, r in follow_ups if r.follow_up_date <= today_str]
+    horizon = (today + timedelta(days=7)).isoformat()
+    overdue = [(idx, record) for idx, record in follow_ups if _follow_up_day(record) <= today_str]
     upcoming = [
-        (i, r)
-        for i, r in follow_ups
-        if today_str < r.follow_up_date <= (today + timedelta(days=7)).isoformat()
+        (idx, record) for idx, record in follow_ups if today_str < _follow_up_day(record) <= horizon
     ]
-    later = [
-        (i, r) for i, r in follow_ups if r.follow_up_date > (today + timedelta(days=7)).isoformat()
-    ]
+    later = [(idx, record) for idx, record in follow_ups if _follow_up_day(record) > horizon]
 
-    # --- Overdue ---
     if overdue:
         st.markdown(f"### Overdue ({len(overdue)})")
         for idx, record in overdue:
+            assert record.follow_up_date is not None
             days_overdue = (today - date.fromisoformat(record.follow_up_date)).days
             with st.expander(
-                f"OVERDUE ({days_overdue}d) | {record.prospect_name or record.prospect_url} → {record.recipient_email}"
+                f"OVERDUE ({days_overdue}d) | {record.prospect_name or record.prospect_url} "
+                f"→ {record.recipient_email}"
             ):
                 st.markdown(
                     f'<span class="follow-up-due">OVERDUE by {days_overdue} day(s)</span>',
@@ -770,7 +971,6 @@ def render_follow_up_dashboard() -> None:
                 st.markdown(f"**Subject:** {record.email_subject}")
                 if record.notes:
                     st.markdown(f"**Notes:** {record.notes}")
-
                 c1, c2 = st.columns(2)
                 with c1:
                     if st.button("Mark as Replied", key=f"fu_reply_{idx}"):
@@ -784,17 +984,19 @@ def render_follow_up_dashboard() -> None:
                         key=f"snooze_sel_{idx}",
                     )
                     if st.button("Snooze", key=f"snooze_{idx}"):
-                        new_date = (today + timedelta(days=snooze_days)).isoformat()
+                        days = snooze_days if isinstance(snooze_days, int) else 1
+                        new_date = (today + timedelta(days=days)).isoformat()
                         update_outreach_record(idx, follow_up_date=new_date)
                         st.rerun()
 
-    # --- Upcoming (next 7 days) ---
     if upcoming:
         st.markdown(f"### Upcoming — Next 7 Days ({len(upcoming)})")
         for idx, record in upcoming:
+            assert record.follow_up_date is not None
             days_until = (date.fromisoformat(record.follow_up_date) - today).days
             with st.expander(
-                f"In {days_until}d ({record.follow_up_date}) | {record.prospect_name or record.prospect_url} → {record.recipient_email}"
+                f"In {days_until}d ({record.follow_up_date}) | "
+                f"{record.prospect_name or record.prospect_url} → {record.recipient_email}"
             ):
                 st.markdown(
                     f'<span class="follow-up-upcoming">Follow-up in {days_until} day(s)</span>',
@@ -803,7 +1005,6 @@ def render_follow_up_dashboard() -> None:
                 st.markdown(f"**Subject:** {record.email_subject}")
                 if record.notes:
                     st.markdown(f"**Notes:** {record.notes}")
-
                 c1, c2 = st.columns(2)
                 with c1:
                     if st.button("Mark as Replied", key=f"fu_reply_{idx}"):
@@ -817,28 +1018,34 @@ def render_follow_up_dashboard() -> None:
                         key=f"snooze_sel_{idx}",
                     )
                     if st.button("Snooze", key=f"snooze_{idx}"):
+                        days = snooze_days if isinstance(snooze_days, int) else 1
                         new_date = (
-                            date.fromisoformat(record.follow_up_date) + timedelta(days=snooze_days)
+                            date.fromisoformat(record.follow_up_date) + timedelta(days=days)
                         ).isoformat()
                         update_outreach_record(idx, follow_up_date=new_date)
                         st.rerun()
 
-    # --- Later ---
     if later:
         st.markdown(f"### Later ({len(later)})")
         for _idx, record in later:
+            assert record.follow_up_date is not None
             days_until = (date.fromisoformat(record.follow_up_date) - today).days
             st.markdown(
-                f"- **{record.follow_up_date}** ({days_until}d) — {record.prospect_name or record.prospect_url} → {record.recipient_email}"
+                f"- **{record.follow_up_date}** ({days_until}d) — "
+                f"{record.prospect_name or record.prospect_url} → {record.recipient_email}"
             )
 
 
-# --- Main App ---
 def main() -> None:
+    """Draw the review desk. Logging is configured once per process."""
+    global _logging_ready
+    if not _logging_ready:
+        configure_logging()
+        _logging_ready = True
+
     init_session_state()
     render_sidebar()
 
-    # Page header
     st.markdown(
         '<div class="branded-header">'
         '<div class="brand-logo-mark">A</div>'
@@ -851,7 +1058,16 @@ def main() -> None:
         unsafe_allow_html=True,
     )
 
-    # Pipeline overview
+    if _state_bool("demo_mode"):
+        st.markdown(
+            '<div class="demo-banner"><strong>Demo mode.</strong> '
+            "Sample pages and a saved draft. No API key, no network, and no email leaves this machine. "
+            "Turn off Demo mode in the sidebar to read a live site.</div>",
+            unsafe_allow_html=True,
+        )
+    elif anthropic_key_is_unset(_state_str("api_key")):
+        st.warning(ANTHROPIC_KEY_MESSAGE)
+
     with st.expander("How It Works — Pipeline Overview", expanded=False):
         st.markdown(
             '<div class="pipeline-steps">'
@@ -863,32 +1079,27 @@ def main() -> None:
             unsafe_allow_html=True,
         )
         st.markdown("""
-**This tool runs a 4-step AI pipeline for each prospect:**
+**This tool runs a 4-step pipeline for each prospect:**
 
 | Step | What Happens |
 |------|-------------|
-| **1. Web Scraping** | Fetches the prospect's website (homepage + key pages like About, Services, Blog) and extracts clean text content. |
-| **2. Need Analysis** | Sends the scraped content to Claude, which identifies the company's industry, pain points, and specific places where data, automation, or operations work could help. |
-| **3. Email Drafting** | Claude writes a personalized cold outreach email that references real details from the prospect's website — not a generic template. |
-| **4. Review & Send** | You review the draft, edit it if needed, and send it via Gmail SMTP. Nothing sends without your confirmation. |
+| **1. Web Scraping** | Fetches the prospect's website (homepage plus a few pages such as About, Services, and Contact) and extracts text. Demo mode loads saved pages instead. |
+| **2. Need Analysis** | Claude returns industry, pain points, and places where data or operations work could help. Demo mode loads saved notes. |
+| **3. Email Drafting** | Claude writes one email that references the pages. Demo mode loads a saved draft for the tone you picked. |
+| **4. Review & Send** | You edit the draft and confirm. Nothing is mailed until then. Demo mode records the confirm locally and does not email. |
 
-**To get started:** Enter your Anthropic API key in the sidebar, paste a prospect URL, and click Run Pipeline.
-Gmail credentials are only needed at step 4 (sending).
-        """)
+Gmail is only used on a live confirm. Batch mode never sends.
+            """)
 
     tab1, tab2, tab3, tab4 = st.tabs(
         ["Single Outreach", "Batch Mode", "Outreach Log", "Follow-Ups"]
     )
-
     with tab1:
         render_single_mode()
-
     with tab2:
         render_batch_mode()
-
     with tab3:
         render_outreach_log()
-
     with tab4:
         render_follow_up_dashboard()
 

@@ -96,6 +96,12 @@ class TestDraftEmail:
         assert "Casey Lee" in user_msg
 
     @patch("src.email_drafter.anthropic.Anthropic")
+    def test_placeholder_key_fails_before_the_client(self, mock_client_cls):
+        with pytest.raises(Exception, match="your-anthropic-api-key"):
+            draft_email(_make_analysis(), api_key="your-anthropic-api-key")
+        mock_client_cls.assert_not_called()
+
+    @patch("src.email_drafter.anthropic.Anthropic")
     def test_invalid_json_raises(self, mock_client_cls):
         client = MagicMock()
         client.messages.create.return_value = _mock_claude_response("Not valid JSON")

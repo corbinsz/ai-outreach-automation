@@ -2,6 +2,8 @@
 
 Personal project by Corbin Szenegeto. Built in spare time to learn the workflow, not to ship a product. There is no hosted version and no usage data. Nothing below is a customer result.
 
+The product write-up is [PRODUCT.md](PRODUCT.md). Decisions that should stay put are in [adr/](adr/0001-confirm-before-send.md). These notes are the longer engineering account.
+
 ## Problem and user
 
 Writing a cold email that mentions something real about a company takes a pass over their site and then a careful draft. The boring failure mode is a template that could have gone to anyone.
@@ -25,9 +27,9 @@ flowchart TD
 2. Claude receives the text and returns JSON: summary, industry, services, pain points, opportunities, a short value note, and one angle.
 3. A second Claude call writes one email in a chosen tone. The sign-off is `SENDER_NAME`, or whatever is typed in the sidebar.
 4. The screen shows the draft. Nothing is mailed until Confirm is pressed. Batch mode never reaches send.
-5. A successful or failed send is appended to `logs/outreach_log.json`. Opened, replied, and follow-up dates are fields you set by hand.
+5. A successful, failed, or demo send is appended to `logs/outreach_log.json`. Opened, replied, and follow-up dates are fields you set by hand. A follow-up edit uses the row id written with that send.
 
-The single-URL screen drives scrape, analyze, and draft itself so the progress bar can move between them. Batch mode calls `OutreachAgent.run_pipeline`, which stops at the draft. Two entry points means a change to one path can miss the other. I left it that way because folding the progress bar into the agent would be a UI rewrite, not a clearer product.
+The screen calls `OutreachAgent.run_pipeline` (and `run_batch` for a list) and moves the progress bar from the callback. Demo mode is the same path with saved pages and saved drafts, so a reviewer can reach the confirm step without a key.
 
 ## Design decisions and tradeoffs
 
@@ -39,7 +41,7 @@ The single-URL screen drives scrape, analyze, and draft itself so the progress b
 
 **SMTP with an app password, not Gmail OAuth.** One person can set this up in a few minutes without a Google Cloud project. The cost is real: app passwords can be disabled by Google, there is no per-user consent screen, and this is a poor fit if more than one person ever sends. I would not keep this choice for a shared tool.
 
-**A JSON file instead of a database.** I can open the log and see exactly what was sent. The cost is no stable id, no locking, and the follow-up button on the send screen updates the last row. That is the row just written only if nothing else appended in between.
+**A JSON file instead of a database.** I can open the log and see exactly what was sent. New rows have an id, and the follow-up button on the send screen uses that id. The cost is still no locking: two processes can overwrite the file, and a row written before ids existed has an id only after the next edit.
 
 **Manual open and reply tracking.** A tracking pixel needs a public endpoint this app does not have, and it records someone opening mail they did not ask for. The log fields exist so I can mark what I actually know. The cost is that "opened" means I said it opened. The counts on the log screen are counts of my own marks, not engagement.
 
@@ -52,6 +54,7 @@ The single-URL screen drives scrape, analyze, and draft itself so the progress b
 ## What it does well
 
 - It separates research, drafting, and sending. You can stop after a draft, and batch mode cannot send.
+- Demo mode runs that same path on two saved companies. It does not call Claude, fetch a site, or open SMTP.
 - The sender name is configuration, not a brand baked into the prompt.
 - Transient Claude and SMTP errors are retried. A bad Gmail password and a rejected recipient are not, because a retry will not fix them.
 - Scraped addresses drop a few obvious non-contacts (`noreply`, `example.com`, image filenames).
@@ -65,11 +68,11 @@ The single-URL screen drives scrape, analyze, and draft itself so the progress b
 
 **Deliverability and spam.** This is cold email from a personal Gmail account over SMTP. Gmail's own spam filters, and the recipient's, will treat unexpected mail as spam. I do not control a separate sending domain, warmup, or bounce handling. Google's help page says a personal account can be blocked after more than 500 messages in a day, or a single message to more than 500 people ([Limits for sending and getting mail](https://support.google.com/mail/answer/22839)). That number is Google's, it can change, and looking like a blast can get an account limited sooner. The app itself enforces no daily cap.
 
-**The first scraped address is not a person you chose.** The single-URL screen prefills the recipient with the first address it found. That address might be a generic inbox, a vendor, or someone who should not get a sales email. You can edit it. The app will not stop you from sending to it.
+**The first scraped address is not a person you chose.** Live mode lists addresses it found and leaves the To field blank. Demo mode fills in the sample `.example` address so the practice send can be clicked. The app still will not stop you from typing an address you should not use.
 
 **Gmail app passwords and SMTP limits.** Sending depends on an app password. Google can refuse that login method. SMTP retries are immediate, with no backoff, up to three tries. The log stores the subject and body of every attempt, including failures, in a local file that is not encrypted.
 
-**Follow-ups are a reminder list.** There is no mail-server clock. "Save Follow-Up" after a send writes the last log row, which is the wrong row if another record was appended first. Snooze and "mark replied" are local edits.
+**Follow-ups are a reminder list.** There is no mail-server clock. "Save Follow-Up" after a send writes the row with that send's id. Snooze and "mark replied" are local edits. The log screen still edits by position, which is the order on screen, so inserting a row above an open expander would point an older button at a different record until the next refresh.
 
 **English only.** The prompts and the scraper assume English pages and an English email.
 
@@ -95,10 +98,10 @@ There is no eval harness, no labeled set of sites, and no record of draft qualit
 
 In the order I would actually do them.
 
-1. **A small offline check on drafts.** Save a few scraped fixtures and frozen model replies, and assert things the prompt already claims: the body stays under 200 words, it does not start with the banned openers, and it mentions a string that appeared on the page. That is still not a taste test. It would catch a prompt change that drops the constraint. Today nothing does.
-2. **Show uncertainty, and stop prefilling the recipient.** When the page is thin, say the notes are inferences. List scraped addresses for me to pick. Do not drop the first one into the To field.
-3. **Scrape more honestly.** Send an identifiable User-Agent, skip paths `robots.txt` disallows, and keep the page cap. I would rather get less text than pretend to be a browser.
-4. **A send cap in the app, then OAuth if anyone else sends.** Refuse to send once a small daily count is hit, well under the Gmail limit, and surface the count from the log. Replace the app password with Gmail OAuth only if this stops being a single-person script. OAuth is more setup than this project needs today.
-5. **Stable log rows.** A uuid per send, so follow-up edits do not depend on "the last line in the file." SQLite is enough. A hosted database is not the point.
+1. **A small offline check on drafts.** The demo fixtures now assert what the prompt already claims for the saved drafts: under 200 words, no banned opener, and a phrase that appears on the saved page. That does not score a live Claude reply. A prompt change can still make live emails worse while those tests stay green.
+2. **Show uncertainty on thin pages.** Live mode no longer prefills the recipient. A page with very little text gets a warning that the notes are inferences. There is still no confidence score and no split between a quote and a guess.
+3. **Scrape more honestly.** Send an identifiable User-Agent, skip paths `robots.txt` disallows, and keep the page cap. I would rather get less text than pretend to be a browser. Same-site `www` links are followed now. The User-Agent is still a Chrome string.
+4. **A send cap in the app, then OAuth if anyone else sends.** Refuse to send once a small daily count is hit, well under the Gmail limit, and surface the count from the log. The app now refuses a recipient that is blank, a list, or split across lines, and it refuses to open SMTP when Gmail settings are missing. It still has no daily cap. Replace the app password with Gmail OAuth only if this stops being a single-person script.
+5. **Stable log rows.** New sends get a uuid, and the follow-up button uses it. SQLite would still be the right store if two processes ever wrote the file. A hosted database is not the point.
 
 I am not planning a public deployment, unsupervised sending, or a tracking pixel.

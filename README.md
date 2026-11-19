@@ -1,120 +1,125 @@
 # AI Outreach
 
-**Personal project by Corbin Szenegeto.** I built this in spare time, for fun and to learn the workflow. It is not a commercial product. There is no hosted copy, no signup, and no public URL. You run it on your own machine.
+**Personal project by Corbin Szenegeto.** I built this in my spare time. It is not a commercial product. There is no hosted copy and no public URL.
 
-Paste a company website. The app reads a few public pages, asks Claude for structured notes, and drafts a cold email in a tone you pick. You edit the draft. Mail goes out only after you confirm, and it goes out from your own Gmail account.
+Paste a company website. The app reads a few public pages, drafts a tailored outreach email, and lets you edit it. Nothing is sent until you confirm.
 
-I made it while practicing the questions behind product, project, RevOps, and data work: who the user is, what the steps are, which shortcuts are acceptable, and how you would know the output is bad.
+![Demo mode: saved company notes and a draft. No API key was used, and no email was sent.](docs/demo-review.png)
 
-The longer write-up of decisions, limits, and what I would build next is in [docs/PRODUCT_NOTES.md](docs/PRODUCT_NOTES.md).
+## Quickstart
 
-## Who it is for
-
-One person working a short list of prospects, reviewing every draft. That person is me. It is not a tool for a sales team, and it does not send on a schedule.
-
-## Workflow
-
-```mermaid
-flowchart TD
-    A[Company URL] --> B[Scraper]
-    B --> C[Page text and any emails found]
-    C --> D[Claude writes notes]
-    D --> E[Claude drafts one email]
-    E --> F[You edit and confirm]
-    F --> G[SMTP from your Gmail account]
-    G --> H[Local JSON log]
-```
-
-Scraping and drafting need an Anthropic API key. Sending needs your Gmail address and a Gmail app password, which is not your normal login password. The app has no other way to send mail.
-
-## Run it locally
-
-Requires Python 3.10 or newer. Continuous integration runs on Python 3.12.
+Python 3.10 or newer.
 
 ```bash
 git clone https://github.com/corbinsz/ai-outreach-automation.git
 cd ai-outreach-automation
-python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
-pip install -r requirements.txt
-cp .env.example .env
+make setup
+make demo
 ```
 
-Put your own values in `.env`. The placeholders in `.env.example` are not credentials. You can skip the file and type the same values in the sidebar. `SENDER_NAME` is optional. If it is missing, drafts use `Your Name` until you change it.
+Streamlit prints `http://127.0.0.1:8501`. That address is only on your machine. Click **Run this sample** for Northwind Analytics. Confirm writes a practice row to a local log. It does not send email.
 
-```
-ANTHROPIC_API_KEY=your-anthropic-api-key
-GMAIL_ADDRESS=you@gmail.com
-GMAIL_APP_PASSWORD=your-16-character-app-password
-SENDER_NAME=Your Name
-```
+`make setup` creates `.venv`, installs dependencies, and copies `.env.example` to `.env` if you do not already have one. The values in the example file are placeholders, not keys. If a live run is missing a key, the app says so and tells you to use demo mode.
 
-Gmail settings are only required when you send. Analysis and drafting work with the Anthropic key alone.
-
-Google will not accept a normal Gmail password for this SMTP login. Create an app password:
-
-1. Open [Google Account Security](https://myaccount.google.com/security).
-2. Turn on 2-Step Verification if it is off.
-3. In account settings, open App passwords and create one for Mail.
-4. Put that 16-character password in `GMAIL_APP_PASSWORD`.
-
-Playwright is optional. Install it only if you want the JavaScript fallback:
+Without make:
 
 ```bash
-playwright install chromium
-```
-
-Start the app:
-
-```bash
-streamlit run app.py
-```
-
-Streamlit prints `http://127.0.0.1:8501`. The server is bound to loopback, so that address is only on your machine. The deploy button in the Streamlit toolbar is hidden because this project is not meant to be published.
-
-This is that screen before a URL is run. No site has been scraped and Claude has not been called. The text in the URL box is the placeholder.
-
-![Local start screen, before any scrape or draft](docs/local-start.png)
-
-### Tests and lint
-
-```bash
+python3 -m venv .venv
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
 pip install -r requirements-dev.txt
-ruff check .
-black --check .
-pytest
+cp .env.example .env
+DEMO_MODE=1 streamlit run app.py --server.address 127.0.0.1
 ```
 
-The suite mocks Claude and SMTP. It does not call the network and does not need keys. GitHub Actions runs the same three commands on pull requests.
+Live mode is `make run` after you replace `your-anthropic-api-key` in `.env`. Gmail is only needed when you send. Use an app password from your Google account security settings, not your login password: [Google Account Security](https://myaccount.google.com/security).
 
-## What the screen can do
+## Features
 
-- Run one URL, or a list. The list drafts only. It does not send.
-- Pick a tone, then edit or regenerate the draft.
-- Send only after you press confirm, from your own Gmail account.
-- Mark a logged email opened or replied, and set a follow-up date. Those marks are manual. There is no tracking pixel.
+- One URL, or a list. The list drafts only. It does not send.
+- Four tones. You can edit the draft or regenerate it.
+- Send only after Confirm, from your own Gmail, to one address you chose. Live mode does not fill the To field in.
+- A local log where you can mark a note opened or replied, and set a follow-up date. Those marks are manual. There is no tracking pixel.
+- Demo mode: two fictional companies saved in the repo, so the whole path runs with no API key and no network.
 
-## Limits, in short
+## How it's built
 
-A fuller account is in [docs/PRODUCT_NOTES.md](docs/PRODUCT_NOTES.md). The parts that matter before you use it:
+```mermaid
+flowchart TD
+    A[Company URL] --> B[Scraper or saved pages]
+    B --> C[Page text and any emails found]
+    C --> D[Notes from Claude or a saved file]
+    D --> E[One draft]
+    E --> F[You edit and confirm]
+    F --> G[Your Gmail or a local practice row]
+    G --> H[Local JSON log]
+```
 
-- Scraping breaks on JavaScript-heavy sites, odd layouts, and sites that block bots. The scraper does not read `robots.txt`, and its User-Agent pretends to be Chrome.
-- Claude will sometimes invent a pain point, especially when the page is thin. The screen shows that text as analysis. Nothing in the app scores whether the draft is any good.
-- Cold email from a personal Gmail account lands in spam, and Google caps how much a personal account can send. Their help page describes a block after more than 500 messages in a day, or one message to more than 500 people: [Limits for sending and getting mail](https://support.google.com/mail/answer/22839). The cap can change, and spam complaints can stop an account sooner.
-- The app does not check that the recipient wants to hear from you. Scraping a site and emailing an address you found there can violate a site's terms or the law where you or they live. You have to identify yourself, have a reason to write, and stop when someone asks.
+Python modules under `src/` do the work. Streamlit is the review screen. Pydantic checks the records passed between steps. Claude writes the live notes and the live draft. Gmail SMTP sends, and only when you confirm. Playwright is optional, for pages that are mostly JavaScript.
 
-## Layout
+The product write-up is [docs/PRODUCT.md](docs/PRODUCT.md). The engineering notes are [docs/PRODUCT_NOTES.md](docs/PRODUCT_NOTES.md). Short decision records are in [docs/adr](docs/adr/0001-confirm-before-send.md).
 
 ```
 ai-outreach-automation/
-├── app.py                  # Streamlit review screen
-├── assets/styles.css       # Local stylesheet, no remote fonts
-├── src/                    # Scrape, analyze, draft, send
-├── tests/                  # pytest, no network
-├── docs/PRODUCT_NOTES.md   # Decisions, limits, roadmap
-├── .github/workflows/ci.yml
-├── requirements.txt        # Pinned runtime packages
-└── requirements-dev.txt    # pytest, ruff, black
+├── app.py                 # Streamlit review screen
+├── src/                   # Scrape, analyze, draft, send, demo mode
+├── fixtures/demo/         # Sample pages and saved drafts
+├── tests/                 # pytest, no network
+├── docs/                  # Product notes and decision records
+├── Dockerfile             # Optional local run, demo mode by default
+└── .github/workflows/ci.yml
 ```
 
-`logs/` is created at runtime and is gitignored.
+## Tests
+
+```bash
+make check
+```
+
+That is Ruff, Black, mypy, and pytest with a coverage report for `src`. The suite mocks Claude and SMTP. It does not call the network and does not need keys. Demo-mode tests fail if a sample run touches the network. GitHub Actions runs the same checks.
+
+## Limits
+
+A fuller account is in [docs/PRODUCT.md](docs/PRODUCT.md) and [docs/PRODUCT_NOTES.md](docs/PRODUCT_NOTES.md).
+
+- Scraping breaks on odd layouts and on sites that block bots. The scraper does not read `robots.txt`, and its User-Agent pretends to be Chrome.
+- The model will sometimes invent a pain point. The screen shows that text as notes. Nothing here scores whether a live draft is true.
+- Cold email from a personal Gmail account lands in spam. Google's help page describes a block after more than 500 messages in a day, or one message to more than 500 people: [Limits for sending and getting mail](https://support.google.com/mail/answer/22839). The app does not enforce a daily cap.
+- The app does not check that the recipient wants to hear from you. You have to identify yourself, have a reason to write, and stop when someone asks.
+- There are no users and no usage numbers. It is a spare-time project.
+
+## Deploying it yourself
+
+Nothing in this repo is deployed. There is no public URL. The steps below are for a machine you control. Do not commit secrets. Prefer demo mode unless you mean to send real mail.
+
+`make demo` and `make run` listen on loopback. The config file leaves the bind address to the command that starts the app, so a host can reach the process. Docker listens on all of the container's interfaces, and Compose publishes that port on loopback.
+
+### Docker
+
+```bash
+docker compose up --build
+```
+
+Compose publishes the app on `http://127.0.0.1:8501` and turns demo mode on. The process inside the container listens on all of its own interfaces so the published port works. The published port is bound to loopback.
+
+To send real mail from a container, set `DEMO_MODE` to `0` and pass `ANTHROPIC_API_KEY`, `GMAIL_ADDRESS`, and `GMAIL_APP_PASSWORD` in the environment. Do not bake them into the image. The image does not install a Playwright browser. The JavaScript fallback needs that browser only for live scrapes of thin pages.
+
+### Streamlit Community Cloud
+
+1. Push the repo to GitHub. Private is fine.
+2. Create an app from this repo with main file `app.py`.
+3. Add `ANTHROPIC_API_KEY` in the host's secret settings. Add the Gmail values only if you intend to send.
+4. Leave `DEMO_MODE` unset, or set it to `0`, when you want live pages.
+
+The host will assign an address. This repo does not include one, and this project is not deployed there.
+
+### Render
+
+1. Create a web service from this repo and choose Docker.
+2. The image listens on port 8501. Set the service port to 8501.
+3. Add the same environment variables in the host's dashboard. Keep demo mode on if you only want the sample companies.
+
+Do not put a live address for this app back into the README.
+
+## License
+
+[MIT](LICENSE). Copyright 2026 Corbin Szenegeto.

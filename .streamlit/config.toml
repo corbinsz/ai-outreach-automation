@@ -13,6 +13,7 @@ gatherUsageStats = false
 toolbarMode = "minimal"
 
 [server]
-# Bind to loopback only. This is a local app, not a service on a public address.
-address = "127.0.0.1"
+# Leave the bind address unset. `make demo` and `make run` pass
+# --server.address 127.0.0.1 so a laptop stays on loopback. Docker sets
+# STREAMLIT_SERVER_ADDRESS=0.0.0.0 so a published port can reach the process.
 runOnSave = true

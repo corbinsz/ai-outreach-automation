@@ -146,8 +146,10 @@ def _extract_company_name(html: str, url: str) -> str:
 
     # Check meta tags
     og_site = soup.find("meta", property="og:site_name")
-    if og_site and og_site.get("content"):
-        return og_site["content"].strip()
+    if og_site is not None:
+        content = og_site.get("content") if hasattr(og_site, "get") else None
+        if isinstance(content, str) and content.strip():
+            return content.strip()
 
     # Check title tag (often "Company Name - tagline")
     title_tag = soup.find("title")
@@ -184,6 +186,19 @@ _EMAIL_RE = re.compile(
 )
 
 
+def _href(tag: object) -> str:
+    """Return an anchor href as text. BeautifulSoup may hand back a list of values."""
+    getter = getattr(tag, "get", None)
+    if not callable(getter):
+        return ""
+    value = getter("href")
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, list) and value and isinstance(value[0], str):
+        return value[0].strip()
+    return ""
+
+
 def _extract_emails(html: str) -> list[str]:
     """
     Extract contact email addresses from HTML.
@@ -196,7 +211,7 @@ def _extract_emails(html: str) -> list[str]:
 
     # 1. mailto: links (highest confidence)
     for a_tag in soup.find_all("a", href=True):
-        href = a_tag["href"].strip()
+        href = _href(a_tag)
         if href.lower().startswith("mailto:"):
             email = href[7:].split("?")[0].strip().lower()
             if email and "@" in email:
@@ -224,6 +239,16 @@ def _extract_emails(html: str) -> list[str]:
     return cleaned
 
 
+def _host_key(netloc: str) -> str:
+    """Return a host for same-site checks. A leading www is not a different site."""
+    host = netloc.lower().strip()
+    if "@" in host:
+        host = host.rsplit("@", 1)[1]
+    if host.startswith("www."):
+        host = host[4:]
+    return host
+
+
 def _discover_links(html: str, base_url: str) -> list[tuple[str, str]]:
     """
     Discover important internal links from the homepage.
@@ -236,7 +261,7 @@ def _discover_links(html: str, base_url: str) -> list[tuple[str, str]]:
     discovered = {}
 
     for a_tag in soup.find_all("a", href=True):
-        href = a_tag["href"].strip()
+        href = _href(a_tag)
 
         # Skip empty, anchors, mailto, tel, javascript
         if not href or href.startswith(("#", "mailto:", "tel:", "javascript:")):
@@ -246,8 +271,9 @@ def _discover_links(html: str, base_url: str) -> list[tuple[str, str]]:
         full_url = urljoin(base_url, href)
         parsed = urlparse(full_url)
 
-        # Only follow internal links
-        if parsed.netloc.lower() != base_domain:
+        # Only follow internal links. www.example.com and example.com are one site.
+        # A different subdomain, such as blog.example.com, is not.
+        if _host_key(parsed.netloc) != _host_key(base_domain):
             continue
 
         # Check path against keywords
@@ -305,7 +331,7 @@ def scrape_website(
         url = "https://" + url
     url = url.rstrip("/")
 
-    def _log(msg: str):
+    def _log(msg: str) -> None:
         logger.info(msg)
         if progress_callback:
             progress_callback(msg)

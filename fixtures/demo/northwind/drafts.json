@@ -1,0 +1,18 @@
+{
+  "professional": {
+    "subject": "The Monday reporting pack",
+    "body": "Hi,\n\nThe services page says weekly client reports are still assembled in spreadsheets, and the homepage describes a Monday leadership pack copied out of three systems. That is a lot of manual work for a 12-person team.\n\nA short conversation could map which of those sources should refresh on a schedule, and which numbers need a single definition before anyone automates them.\n\nWorth a 15-minute chat?\n\n{{sender_name}}"
+  },
+  "conversational": {
+    "subject": "Monday's pack, three systems",
+    "body": "Hi,\n\nI was reading how Northwind runs weekly client reports. They are still assembled in spreadsheets, and a Monday leadership pack is copied out of three systems. That sounds like the work that quietly eats a small team's week.\n\nI am curious which of those three sources is the painful one. If it is useful, I can share how I would decide what to refresh on a schedule and what still needs a person to explain it.\n\nOpen to a 15-minute chat?\n\n{{sender_name}}"
+  },
+  "bold": {
+    "subject": "Stop copying the Monday pack",
+    "body": "Hi,\n\nNorthwind's services page still has weekly client reports assembled in spreadsheets, and the Monday leadership pack is copied out of three systems. A 12-person consultancy should not spend its best hours on that copy step.\n\nThe fix is not another dashboard no one trusts. It is one definition per metric, and a refresh that does the copying.\n\nWorth 15 minutes to see if that is actually the bottleneck?\n\n{{sender_name}}"
+  },
+  "consultative": {
+    "subject": "Which number gets copied?",
+    "body": "Hi,\n\nNorthwind helps manufacturers trust their numbers, and the site is frank about the messy middle: weekly client reports assembled in spreadsheets, and a Monday leadership pack copied out of three systems.\n\nBefore automating any of that, I would want to know which source changes the decision and which metric definitions still disagree. That is the conversation I would like to have.\n\nWould a 15-minute working session be useful?\n\n{{sender_name}}"
+  }
+}

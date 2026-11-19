@@ -8,10 +8,21 @@ import logging
 import time
 
 import anthropic
+from anthropic.types import Message
 
 logger = logging.getLogger(__name__)
 
 _MAX_RETRIES = 3
+
+
+def message_text(message: Message) -> str:
+    """Return the text of the first block, or raise if the model sent something else."""
+    if not message.content:
+        raise ValueError("LLM returned an empty response.")
+    text = getattr(message.content[0], "text", None)
+    if not isinstance(text, str) or not text.strip():
+        raise ValueError("LLM returned a non-text response.")
+    return text
 
 
 def create_message(
@@ -20,7 +31,7 @@ def create_message(
     system: str,
     user_prompt: str,
     max_tokens: int,
-):
+) -> Message:
     """Retry rate limits, connection errors, and 5xx. Other errors propagate.
 
     A bad API key or a rejected request will not succeed on a second try,

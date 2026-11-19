@@ -1,0 +1,22 @@
+{
+  "company_name": "Northwind Analytics",
+  "company_summary": "Northwind Analytics is a 12-person consultancy in Chicago. It helps regional manufacturers replace spreadsheet reporting with a shared set of numbers.",
+  "industry": "Analytics consulting for manufacturers",
+  "services_offered": [
+    "Weekly operating reviews",
+    "Metric definitions for plant and finance teams",
+    "Lightweight dashboard builds"
+  ],
+  "pain_points": [
+    "Weekly client reports are assembled in spreadsheets, so the Monday leadership pack depends on someone copying numbers out of three systems.",
+    "The planning tool, the plant system, and the finance workbook do not share one definition of a metric.",
+    "Analyst time goes to refreshing the pack instead of explaining what changed."
+  ],
+  "ai_opportunities": [
+    "A scheduled pull from the three source systems would remove the copy step the services page describes.",
+    "A short metric dictionary, written once per client, would keep a dashboard from mixing two definitions of the same number.",
+    "A Monday note that flags only the metrics that moved would leave the analysts time to write the interpretation."
+  ],
+  "value_proposition": "The useful conversation is which of the three sources should refresh on a schedule, and which numbers need one definition before anything is automated.",
+  "recommended_angle": "The Monday leadership pack that is still copied out of three systems."
+}

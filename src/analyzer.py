@@ -9,7 +9,8 @@ import logging
 
 import anthropic
 
-from src.llm_client import create_message
+from src.config import require_anthropic_api_key
+from src.llm_client import create_message, message_text
 from src.llm_json import parse_llm_json
 from src.models import DEFAULT_MODEL, NeedAnalysis, ScrapedWebsite
 
@@ -73,6 +74,7 @@ def analyze_prospect(
     model: str = DEFAULT_MODEL,
 ) -> NeedAnalysis:
     """Return structured notes for one scraped site."""
+    api_key = require_anthropic_api_key(api_key)
     client = anthropic.Anthropic(api_key=api_key)
 
     content = scraped.raw_text_summary
@@ -87,7 +89,7 @@ def analyze_prospect(
 
     logger.info("Sending analysis request to Claude (%s)...", model)
     message = create_message(client, model, ANALYSIS_SYSTEM_PROMPT, user_prompt, max_tokens=2000)
-    data = parse_llm_json(message.content[0].text)
+    data = parse_llm_json(message_text(message))
     analysis = NeedAnalysis(**data)
     logger.info("Analysis complete for %s", analysis.company_name)
     return analysis
