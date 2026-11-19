@@ -6,7 +6,7 @@ ifneq ($(wildcard .venv/bin/python),)
 PYTHON := .venv/bin/python
 endif
 
-.PHONY: setup demo run test lint format check
+.PHONY: setup demo run eval test lint format check
 
 setup:
 	python3 -c 'import sys; raise SystemExit("Python 3.10 or newer is required.") if sys.version_info < (3, 10) else None'
@@ -23,8 +23,11 @@ demo:
 run:
 	DEMO_MODE=0 $(PYTHON) -m streamlit run app.py --server.address 127.0.0.1
 
+eval:
+	$(PYTHON) -m src.draft_eval
+
 test:
-	$(PYTHON) -m pytest --cov=src --cov-report=term-missing --cov-fail-under=85
+	$(PYTHON) -m pytest --cov=src --cov-report=term-missing --cov-fail-under=90
 
 lint:
 	$(PYTHON) -m ruff check .

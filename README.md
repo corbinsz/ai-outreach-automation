@@ -1,14 +1,24 @@
 # AI Outreach
 
-**Personal project by Corbin Szenegeto.** I built this in my spare time. It is not a commercial product. There is no hosted copy and no public URL.
+**Personal project by Corbin Szenegeto.** I built this in my spare time. It is not a commercial product.
 
-Paste a company website. The app reads a few public pages, drafts a tailored outreach email, and lets you edit it. Nothing is sent until you confirm.
+Paste a company website. The app reads a few public pages, drafts one email you can edit, and sends it only after you confirm.
 
-![Demo mode: saved company notes and a draft. No API key was used, and no email was sent.](docs/demo-review.png)
+[![CI](https://github.com/corbinsz/ai-outreach-automation/actions/workflows/ci.yml/badge.svg)](https://github.com/corbinsz/ai-outreach-automation/actions/workflows/ci.yml)
 
-## Quickstart
+![Demo mode: a saved draft and a practice send. No API key was used, and no email was sent.](docs/demo-review.png)
 
-Python 3.10 or newer.
+```bash
+make setup && make demo
+```
+
+Streamlit prints `http://127.0.0.1:8501` on your machine. Click **Run this sample** for Northwind Analytics. Confirm writes a practice row. It does not send email.
+
+`make eval` scores the saved drafts with no API key. The rubric and the measured results are in [docs/PRODUCT.md](docs/PRODUCT.md).
+
+## Setup
+
+Python 3.10 or newer. `make setup` creates `.venv`, installs dependencies, and copies `.env.example` to `.env` if you do not already have one. The values in the example file are placeholders, not keys. If a live run is missing a key, the app says so and tells you to use demo mode.
 
 ```bash
 git clone https://github.com/corbinsz/ai-outreach-automation.git
@@ -16,10 +26,6 @@ cd ai-outreach-automation
 make setup
 make demo
 ```
-
-Streamlit prints `http://127.0.0.1:8501`. That address is only on your machine. Click **Run this sample** for Northwind Analytics. Confirm writes a practice row to a local log. It does not send email.
-
-`make setup` creates `.venv`, installs dependencies, and copies `.env.example` to `.env` if you do not already have one. The values in the example file are placeholders, not keys. If a live run is missing a key, the app says so and tells you to use demo mode.
 
 Without make:
 
@@ -62,7 +68,8 @@ The product write-up is [docs/PRODUCT.md](docs/PRODUCT.md). The engineering note
 ai-outreach-automation/
 ├── app.py                 # Streamlit review screen
 ├── src/                   # Scrape, analyze, draft, send, demo mode
-├── fixtures/demo/         # Sample pages and saved drafts
+├── fixtures/demo/         # Two sample companies and their saved drafts
+├── fixtures/eval/         # Twelve fictional pages for the offline rubric
 ├── tests/                 # pytest, no network
 ├── docs/                  # Product notes and decision records
 ├── Dockerfile             # Optional local run, demo mode by default
@@ -75,14 +82,14 @@ ai-outreach-automation/
 make check
 ```
 
-That is Ruff, Black, mypy, and pytest with a coverage report for `src`. The suite mocks Claude and SMTP. It does not call the network and does not need keys. Demo-mode tests fail if a sample run touches the network. GitHub Actions runs the same checks.
+That is Ruff, Black, mypy, and pytest with a coverage report for `src` (the floor is 90%). The suite mocks Claude and SMTP. It does not call the network and does not need keys. Demo-mode tests fail if a sample run touches the network. `make eval` is the offline draft score. GitHub Actions runs the same checks as `make check`.
 
 ## Limits
 
 A fuller account is in [docs/PRODUCT.md](docs/PRODUCT.md) and [docs/PRODUCT_NOTES.md](docs/PRODUCT_NOTES.md).
 
 - Scraping breaks on odd layouts and on sites that block bots. The scraper does not read `robots.txt`, and its User-Agent pretends to be Chrome.
-- The model will sometimes invent a pain point. The screen shows that text as notes. Nothing here scores whether a live draft is true.
+- The model will sometimes invent a pain point. The screen shows that text as notes. `make eval` scores saved drafts with string checks. It does not score a live draft, and a copied phrase can still be an unfair sentence.
 - Cold email from a personal Gmail account lands in spam. Google's help page describes a block after more than 500 messages in a day, or one message to more than 500 people: [Limits for sending and getting mail](https://support.google.com/mail/answer/22839). The app does not enforce a daily cap.
 - The app does not check that the recipient wants to hear from you. You have to identify yourself, have a reason to write, and stop when someone asks.
 - There are no users and no usage numbers. It is a spare-time project.

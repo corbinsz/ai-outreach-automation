@@ -6,6 +6,7 @@ This project is not published as a package. The log records changes that matter 
 
 ### Added
 
+- `make eval`: an offline rubric for saved drafts (fact citation, length, banned phrases, invented digits, company name, clear ask) on the demo drafts and 12 fictional company pages. The measured table is in `docs/PRODUCT.md`. The confirm-gate count is from the test-suite scenarios, not from users.
 - Demo mode: two saved companies, saved notes, and saved drafts. `make demo` runs the full review flow with no API key and no network. A practice confirm is stored locally and is not emailed.
 - `make setup` for a virtualenv, dev tools, and a `.env` copied from the example file.
 - Dockerfile and docker-compose for running that demo on your own machine. Nothing in this repo is deployed.

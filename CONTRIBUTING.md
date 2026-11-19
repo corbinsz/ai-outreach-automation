@@ -45,7 +45,7 @@ Install the git hooks after `make setup`:
 
 The suite does not call the network and does not need API keys. Demo-mode tests fail if a sample run touches HTTP, the Anthropic client, or SMTP.
 
-Add a test when you fix a bug. A change to the saved drafts should keep them under 200 words, free of the banned opener, and tied to a phrase that is actually in the fixture HTML.
+Add a test when you fix a bug. `make eval` scores the saved drafts. The Success metrics section of `docs/PRODUCT.md` has to match that script; a test fails if they drift. If you change a saved draft, run `make eval` and replace that section with the script's output. Do not type a new pass rate by hand.
 
 ## Secrets and mail
 
