@@ -88,17 +88,18 @@ If I use it, the bar is: a specific reason to write, my real name in the sign-of
 
 | Check | What it actually tells me |
 | --- | --- |
-| pytest, with Claude and SMTP mocked | Parsing, retries, log updates, and the pipeline's stop-at-draft behavior. It does not tell me a draft is good. |
-| Ruff and Black in GitHub Actions | Style and a few bug patterns. Not product quality. |
-| Reading a draft before Confirm | The only review of whether the email is specific and fair. It is manual, and I do not have a written rubric in the repo. |
+| pytest, with Claude and SMTP mocked | Parsing, retries, log updates, and the pipeline's stop-at-draft behavior. It does not tell me a live draft is good. |
+| `make eval` on saved drafts | String checks from [DRAFT_RUBRIC.md](DRAFT_RUBRIC.md): a copied phrase, length, banned phrases, digits, the company name, and a clear ask. The counts are in [PRODUCT.md](PRODUCT.md). They are not a live model score and not a user metric. |
+| Ruff, Black, and mypy in GitHub Actions | Style, a few bug patterns, and type hints. Not product quality. |
+| Reading a draft before Confirm | Whether the email is specific and fair. The script does not block send. |
 
-There is no eval harness, no labeled set of sites, and no record of draft quality over time. I am not publishing a score because I have not measured one.
+There is no labeled set of live sites and no record of draft quality over time. Replies are unmeasured because there is no campaign.
 
 ## Roadmap
 
 In the order I would actually do them.
 
-1. **A small offline check on drafts.** The demo fixtures now assert what the prompt already claims for the saved drafts: under 200 words, no banned opener, and a phrase that appears on the saved page. That does not score a live Claude reply. A prompt change can still make live emails worse while those tests stay green.
+1. **A small offline check on drafts.** `make eval` scores the saved demo drafts and 12 fictional pages with the rubric in `docs/DRAFT_RUBRIC.md`. That does not score a live Claude reply. A prompt change can still make live emails worse while those checks stay green.
 2. **Show uncertainty on thin pages.** Live mode no longer prefills the recipient. A page with very little text gets a warning that the notes are inferences. There is still no confidence score and no split between a quote and a guess.
 3. **Scrape more honestly.** Send an identifiable User-Agent, skip paths `robots.txt` disallows, and keep the page cap. I would rather get less text than pretend to be a browser. Same-site `www` links are followed now. The User-Agent is still a Chrome string.
 4. **A send cap in the app, then OAuth if anyone else sends.** Refuse to send once a small daily count is hit, well under the Gmail limit, and surface the count from the log. The app now refuses a recipient that is blank, a list, or split across lines, and it refuses to open SMTP when Gmail settings are missing. It still has no daily cap. Replace the app password with Gmail OAuth only if this stops being a single-person script.

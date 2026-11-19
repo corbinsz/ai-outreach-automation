@@ -1,6 +1,6 @@
 # Product
 
-Personal spare-time project by Corbin Szenegeto. This is not a company, not a launched product, and not something a team uses. There are no customers and no usage numbers. The notes below are the product thinking behind the build, not a report of results.
+Personal spare-time project by Corbin Szenegeto. This is not a company, not a launched product, and not something a team uses. There are no customers and no usage numbers. The notes below are the product thinking behind the build. The only measurements are the offline checks under Success metrics. They are not user results.
 
 The longer engineering account is [PRODUCT_NOTES.md](PRODUCT_NOTES.md). The decisions that should stay put are in [adr/](adr/0001-confirm-before-send.md).
 
@@ -29,14 +29,62 @@ Someone reading the repo can also run it. Demo mode exists for that person. It i
 
 ## Success metrics
 
-I have not measured these. There is no campaign, no baseline, and no dashboard of results. If I used this on a real list, the numbers I would keep are:
+These figures come from `make eval` on files in this repo. No model was called, no email was sent, and there are no users. Replies, minutes from a URL to a draft someone will send, and how often a person stops on a real list are still unmeasured. There is no campaign to count.
 
-- Of the drafts I actually send, how many I send without rewriting the first paragraph. That is a rough check that the draft was specific.
-- Replies per 20 emails I chose to send. I would not count demo rows, and I would not count mail that bounced.
-- Minutes from pasting a URL to a draft I am willing to send.
-- How often I stop at the confirm step. A high stop rate can mean the safeguard is doing its job.
+### Saved demo drafts (8)
 
-I am not publishing a score. I have not collected one.
+Northwind Analytics and Harbor & Pine Goods, four tones each. These are the drafts `make demo` shows. The page text is the saved HTML. The rubric is [DRAFT_RUBRIC.md](DRAFT_RUBRIC.md).
+
+| Check | Passed |
+| --- | --- |
+| Cites a fact from the page | 8/8 |
+| Length within target | 8/8 |
+| No banned phrase | 8/8 |
+| No invented number | 8/8 |
+| Names the company | 6/8 |
+| Clear ask | 8/8 |
+| All six checks | 6/8 |
+
+Misses: Northwind Analytics / professional (Names the company); Harbor & Pine Goods / professional (Names the company).
+
+### Fixture drafts (12)
+
+One hand-written draft for each fictional company page in `fixtures/eval`. Some were written to miss a single check, so a row of perfect scores would mean that check never fires. They are not model output.
+
+| Check | Passed |
+| --- | --- |
+| Cites a fact from the page | 11/12 |
+| Length within target | 10/12 |
+| No banned phrase | 11/12 |
+| No invented number | 11/12 |
+| Names the company | 11/12 |
+| Clear ask | 11/12 |
+| All six checks | 5/12 |
+
+Misses: Brine & Barrel / saved (No invented number); Copperline HVAC / saved (Clear ask); Fieldnote Survey / saved (Names the company); Mossline Nursery / saved (No banned phrase); Otterlight Kayaks / saved (Length within target); Paperkite Studio / saved (Cites a fact from the page); Redloom Bakery / saved (Length within target).
+
+### Confirm gate in the test scenarios
+
+Each row is a pipeline run from the situations the test suite covers. A run counts when it produced a draft. Stopped means the stage stayed at review and send was not called.
+
+| Scenario | Stopped before send |
+| --- | --- |
+| Single URL, no auto-send | yes |
+| Recipient filled in, no auto-send | yes |
+| Auto-send on, no recipient | yes |
+| Auto-send on, with a recipient | no |
+| Batch, first URL | yes |
+| Batch, second URL | yes |
+| Batch, failed scrape | no draft, not counted |
+| Batch URL after a failed scrape | yes |
+| Empty scrape | no draft, not counted |
+| Analysis raises | no draft, not counted |
+| Missing API key | no draft, not counted |
+| Demo mode, Northwind | yes |
+| Demo batch, unknown URL | no draft, not counted |
+| Demo batch, Harbor & Pine | yes |
+
+The gate stopped a send in 8 of 9 runs that produced a draft. 5 runs produced no draft and are not in that fraction. The one counted run that did not stop had auto-send on and a recipient. The review screen source does not mention auto-send, so the screen cannot take that bypass.
 
 ## What was scoped out, and why
 
@@ -46,13 +94,13 @@ I am not publishing a score. I have not collected one.
 - **Purchased lists and blast sends.** The confirm step is one address. A comma-separated list is rejected.
 - **A CRM, a database server, or a hosted log.** A JSON file on the laptop is enough to see what was sent. It is a bad multi-user store.
 - **An agent framework.** Four functions with typed records between them are easier to test than a framework that hides the handoff. See the engineering notes.
-- **Scoring draft quality automatically.** The tests check that saved demo drafts stay specific and short. They do not know whether a live draft is true or fair. I read the draft.
+- **Scoring a live model draft.** `make eval` scores saved text with string checks. It does not call Claude. A paraphrase of a true fact fails the citation check. I still read the draft before confirm.
 
 ## Risks
 
 Cold email can be illegal, against a site's terms, or simply unwanted. The app does not know the rules where you or the recipient live, does not add an unsubscribe link, and does not check that you have a relationship with the person. Scraping a site and writing to an address published there can violate the site's terms.
 
-Claude will sometimes invent a pain point, especially when the page is thin. The screen labels the result as notes. A thin page gets a warning. Nothing in the app scores whether the draft is true.
+Claude will sometimes invent a pain point, especially when the page is thin. The screen labels the result as notes. A thin page gets a warning. The offline eval can catch a digit that is not on the page and a missing phrase. It cannot tell whether a paraphrase is fair, and a low score does not block confirm.
 
 Mail from a personal Gmail account is easy for spam filters to drop. Google's own help page describes a block after more than 500 messages in a day, or one message to more than 500 people ([Limits for sending and getting mail](https://support.google.com/mail/answer/22839)). That number is Google's, it can change, and looking like a blast can limit an account sooner. This app enforces no daily cap.
 
@@ -90,7 +138,7 @@ Python, Streamlit, BeautifulSoup, Pydantic, the Anthropic API, and Gmail SMTP. P
 
 In the order I would actually do them. Items already done are marked so this list does not pretend they are still open.
 
-1. **Done for the saved drafts, open for live ones.** The demo tests check length, a banned opener, and a phrase from the saved page. A live prompt change is still unmeasured.
+1. **Done for saved drafts, open for live ones.** `make eval` scores the demo drafts and 12 fictional pages. A live prompt change is still unmeasured.
 2. **Partly done.** Live mode does not prefill the recipient, and a thin page shows a warning. There is still no split between a quote and a guess.
 3. **Open.** An identifiable User-Agent and a `robots.txt` check. The scraper still pretends to be Chrome.
 4. **Open.** A small daily send cap, well under Gmail's published limit, counted from the log. OAuth only if someone other than me sends.
