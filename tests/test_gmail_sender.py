@@ -5,7 +5,14 @@ import smtplib
 from unittest.mock import MagicMock, patch
 
 import pytest
-from src.gmail_sender import _log_outreach, get_outreach_log, send_email, update_outreach_record
+from pydantic import ValidationError
+from src.gmail_sender import (
+    _log_outreach,
+    get_outreach_log,
+    send_email,
+    update_outreach_record,
+    update_outreach_record_by_id,
+)
 from src.models import EmailDraft, OutreachRecord
 
 
@@ -117,6 +124,76 @@ class TestSendEmail:
         assert result.status == "sent"
         assert mock_smtp_cls.call_count == 3  # retried
 
+    @patch("src.gmail_sender._log_outreach")
+    @patch("src.gmail_sender.smtplib.SMTP")
+    def test_missing_gmail_does_not_open_a_connection(self, mock_smtp_cls, mock_log):
+        result = send_email(
+            draft=_make_draft(),
+            to_address="recipient@example.com",
+            gmail_address="",
+            gmail_app_password="",
+        )
+
+        assert result.status == "failed"
+        assert result.error_message is not None
+        assert "GMAIL_ADDRESS" in result.error_message
+        mock_smtp_cls.assert_not_called()
+        mock_log.assert_called_once()
+
+    @patch("src.gmail_sender._log_outreach")
+    @patch("src.gmail_sender.smtplib.SMTP")
+    def test_placeholder_gmail_does_not_open_a_connection(self, mock_smtp_cls, mock_log):
+        result = send_email(
+            draft=_make_draft(),
+            to_address="recipient@example.com",
+            gmail_address="you@gmail.com",
+            gmail_app_password="your-16-character-app-password",
+        )
+
+        assert result.status == "failed"
+        assert result.error_message is not None
+        assert "not credentials" in result.error_message
+        mock_smtp_cls.assert_not_called()
+
+    @patch("src.gmail_sender._log_outreach")
+    @patch("src.gmail_sender.smtplib.SMTP")
+    def test_subject_newline_stays_in_one_header(self, mock_smtp_cls, mock_log):
+        server = MagicMock()
+        mock_smtp_cls.return_value.__enter__ = MagicMock(return_value=server)
+        mock_smtp_cls.return_value.__exit__ = MagicMock(return_value=False)
+
+        result = send_email(
+            draft=EmailDraft(subject="Hello\nBcc: evil@example.com", body="Body"),
+            to_address="recipient@example.com",
+            gmail_address="sender@gmail.com",
+            gmail_app_password="abcdefghijklmnop",
+        )
+
+        assert result.status == "sent"
+        sent = server.send_message.call_args[0][0]
+        assert "\n" not in sent["Subject"]
+        assert sent["Bcc"] is None
+        assert "Hello" in sent["Subject"]
+
+    @patch("src.gmail_sender._log_outreach")
+    @patch("src.gmail_sender.smtplib.SMTP")
+    @pytest.mark.parametrize(
+        "recipient",
+        ["", "not-an-email", "a@b.com, c@d.com", "a@b.com\nBcc: evil@example.com"],
+    )
+    def test_bad_recipient_does_not_open_a_connection(self, mock_smtp_cls, mock_log, recipient):
+        result = send_email(
+            draft=_make_draft(),
+            to_address=recipient,
+            gmail_address="sender@gmail.com",
+            gmail_app_password="abcdefghijklmnop",
+        )
+
+        assert result.status == "failed"
+        assert result.error_message is not None
+        assert "one email address" in result.error_message
+        mock_smtp_cls.assert_not_called()
+
 
 class TestOutreachLog:
     def test_log_and_read(self, tmp_path):
@@ -210,3 +287,47 @@ class TestUpdateOutreachRecord:
         assert records[0].notes is None
         assert records[1].notes == "Updated"
         assert records[2].notes is None
+
+    def test_invalid_value_does_not_rewrite_the_file(self, tmp_path):
+        _seed_log(tmp_path)
+        original = (tmp_path / "outreach_log.json").read_text(encoding="utf-8")
+        with patch("src.gmail_sender.LOG_DIR", tmp_path):
+            with pytest.raises(ValidationError):
+                update_outreach_record(0, email_body={"not": "text"})
+        assert (tmp_path / "outreach_log.json").read_text(encoding="utf-8") == original
+
+    def test_update_by_id_does_not_touch_a_later_row(self, tmp_path):
+        with patch("src.gmail_sender.LOG_DIR", tmp_path):
+            first = OutreachRecord(
+                prospect_url="https://first.example",
+                prospect_name="First",
+                recipient_email="first@example.com",
+                email_subject="Hello first",
+                email_body="Body",
+                status="sent",
+            )
+            second = OutreachRecord(
+                prospect_url="https://second.example",
+                prospect_name="Second",
+                recipient_email="second@example.com",
+                email_subject="Hello second",
+                email_body="Body",
+                status="sent",
+            )
+            _log_outreach(first)
+            _log_outreach(second)
+            update_outreach_record_by_id(first.id, notes="follow up with the first company")
+            rows = get_outreach_log()
+
+        assert rows[0].id == first.id
+        assert rows[0].notes == "follow up with the first company"
+        assert rows[1].id == second.id
+        assert rows[1].notes is None
+
+    def test_unknown_id_does_not_update_the_last_row(self, tmp_path):
+        _seed_log(tmp_path, count=2)
+        original = (tmp_path / "outreach_log.json").read_text(encoding="utf-8")
+        with patch("src.gmail_sender.LOG_DIR", tmp_path):
+            with pytest.raises(KeyError):
+                update_outreach_record_by_id("missing-id", notes="should not land")
+        assert (tmp_path / "outreach_log.json").read_text(encoding="utf-8") == original

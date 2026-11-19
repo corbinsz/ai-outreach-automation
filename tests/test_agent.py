@@ -160,3 +160,16 @@ class TestOutreachAgent:
 
         assert len(results) == 2
         assert results[0].stage == "failed"  # first URL failed
+        assert results[1].stage == "reviewing"
+
+    @patch("src.analyzer.anthropic.Anthropic")
+    @patch("src.agent.scrape_website")
+    def test_missing_api_key_fails_before_the_client_is_built(self, mock_scrape, mock_client_cls):
+        mock_scrape.return_value = _make_scraped()
+        agent = OutreachAgent(AgentConfig(anthropic_api_key=""))
+        result = agent.run_pipeline(url="https://acme.com")
+
+        assert result.stage == "failed"
+        assert result.error is not None
+        assert "make demo" in result.error
+        mock_client_cls.assert_not_called()

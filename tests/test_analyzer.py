@@ -125,6 +125,13 @@ class TestAnalyzeProspect:
         assert result.company_name == "Acme Corp"
         assert client.messages.create.call_count == 2
 
+    @patch("src.analyzer.anthropic.Anthropic")
+    @pytest.mark.parametrize("api_key", ["", "   ", "your-anthropic-api-key"])
+    def test_missing_or_placeholder_key_fails_before_the_client(self, mock_client_cls, api_key):
+        with pytest.raises(Exception, match="Anthropic API key|your-anthropic-api-key|make demo"):
+            analyze_prospect(_make_scraped(), api_key=api_key)
+        mock_client_cls.assert_not_called()
+
     def test_system_prompt_asks_for_grounded_analysis(self):
         lowered = ANALYSIS_SYSTEM_PROMPT.lower()
         assert "analyst" in lowered

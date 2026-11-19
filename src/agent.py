@@ -9,6 +9,7 @@ import logging
 from dataclasses import dataclass, field
 
 from src.analyzer import analyze_prospect
+from src.demo import demo_analysis, demo_draft, demo_scrape, demo_send
 from src.email_drafter import draft_email
 from src.gmail_sender import send_email
 from src.models import (
@@ -36,6 +37,7 @@ class AgentConfig:
     tone: str = "professional"
     llm_model: str = DEFAULT_MODEL
     use_playwright: bool = True
+    demo_mode: bool = False
 
 
 @dataclass
@@ -62,7 +64,9 @@ class OutreachAgent:
         self.config = config
 
     def scrape(self, url: str, progress_callback: ProgressCallback | None = None) -> ScrapedWebsite:
-        """Phase 1: Scrape the prospect's website."""
+        """Phase 1: Scrape the prospect's website, or load a saved sample in demo mode."""
+        if self.config.demo_mode:
+            return demo_scrape(url, progress_callback=progress_callback)
         return scrape_website(
             url=url,
             use_playwright_fallback=self.config.use_playwright,
@@ -70,7 +74,9 @@ class OutreachAgent:
         )
 
     def analyze(self, scraped: ScrapedWebsite) -> NeedAnalysis:
-        """Phase 2: Analyze the prospect's needs via LLM."""
+        """Phase 2: Analyze the prospect's needs via LLM, or load the saved notes."""
+        if self.config.demo_mode:
+            return demo_analysis(scraped)
         return analyze_prospect(
             scraped=scraped,
             api_key=self.config.anthropic_api_key,
@@ -78,7 +84,13 @@ class OutreachAgent:
         )
 
     def draft(self, analysis: NeedAnalysis) -> EmailDraft:
-        """Phase 3: Draft a personalized outreach email."""
+        """Phase 3: Draft a personalized outreach email, or load the saved draft."""
+        if self.config.demo_mode:
+            return demo_draft(
+                analysis=analysis,
+                sender_name=self.config.sender_name,
+                tone=self.config.tone,
+            )
         return draft_email(
             analysis=analysis,
             api_key=self.config.anthropic_api_key,
@@ -94,7 +106,15 @@ class OutreachAgent:
         prospect_url: str = "",
         prospect_name: str = "",
     ) -> OutreachRecord:
-        """Phase 4: Send the email via Gmail."""
+        """Phase 4: Send the email via Gmail, or record a local practice send in demo mode."""
+        if self.config.demo_mode:
+            return demo_send(
+                draft=draft,
+                to_address=to_address,
+                sender_name=self.config.sender_name,
+                prospect_url=prospect_url,
+                prospect_name=prospect_name,
+            )
         return send_email(
             draft=draft,
             to_address=to_address,
@@ -115,7 +135,7 @@ class OutreachAgent:
         """Run one URL. Stops at the draft unless auto_send is set and a recipient is present."""
         result = PipelineResult(url=url)
 
-        def _log(msg: str):
+        def _log(msg: str) -> None:
             logger.info(msg)
             if progress_callback:
                 progress_callback(msg)

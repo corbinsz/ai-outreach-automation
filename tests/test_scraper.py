@@ -130,6 +130,19 @@ class TestDiscoverLinks:
         assert types.get("https://acme.com/services") == "services"
         assert types.get("https://acme.com/blog") == "blog"
 
+    def test_www_host_is_the_same_site_and_other_subdomains_are_not(self):
+        html = """
+        <html><body>
+        <a href="https://www.acme.com/about">About Us</a>
+        <a href="https://acme.com/services">Services</a>
+        <a href="https://blog.acme.com/news">News</a>
+        </body></html>
+        """
+        urls = [url for url, _page_type in _discover_links(html, "https://acme.com")]
+        assert "https://www.acme.com/about" in urls
+        assert "https://acme.com/services" in urls
+        assert not any("blog.acme.com" in url for url in urls)
+
 
 class TestFetchPage:
     def test_success(self):

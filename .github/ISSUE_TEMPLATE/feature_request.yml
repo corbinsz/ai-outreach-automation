@@ -1,0 +1,30 @@
+name: Feature request
+description: A change to the local tool.
+title: "[Feature] "
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This is a personal project with no users and no hosted copy.
+        Unsupervised sending, open tracking, and a public deployment are out of scope.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What is hard today
+      description: The job you are trying to do, not the widget you want added.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you would change
+    validations:
+      required: true
+  - type: textarea
+    id: out-of-scope
+    attributes:
+      label: What should stay out
+      description: Especially if the idea sends mail, tracks opens, or needs a server.
+    validations:
+      required: false

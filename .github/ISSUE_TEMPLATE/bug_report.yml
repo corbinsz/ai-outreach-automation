@@ -1,0 +1,39 @@
+name: Bug report
+description: Something in the local app is wrong.
+title: "[Bug] "
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This project runs on your machine. It is not a hosted service.
+        Please do not include API keys, app passwords, or real recipient addresses.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what you saw.
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Which mode
+      options:
+        - Demo mode (no API key)
+        - Live mode
+        - Tests or make check
+    validations:
+      required: true
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      placeholder: "3.12"
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log or error
+      description: Paste the error text. Remove secrets first.
+    validations:
+      required: false

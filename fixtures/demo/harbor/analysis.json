@@ -1,0 +1,22 @@
+{
+  "company_name": "Harbor & Pine Goods",
+  "company_summary": "Harbor & Pine Goods is a two-person studio in Portland making small-batch linen and ceramics. Wholesale opened this year, and the founders still answer every shop themselves.",
+  "industry": "Independent home goods, wholesale",
+  "services_offered": [
+    "Small-batch linen and ceramics",
+    "Wholesale for independent shops",
+    "Email reorder confirmations"
+  ],
+  "pain_points": [
+    "Wholesale orders are tracked in a spreadsheet, so availability lives in a file instead of in the reply to the shop.",
+    "Shops still reorder by email, and the same thread has to carry stock, terms, and the ship date.",
+    "Two founders answering the inbox can disagree with the sheet about what is actually on the shelf."
+  ],
+  "ai_opportunities": [
+    "A reorder note could show what the sheet says is in stock, so the founder is not retyping the same check.",
+    "Terms and the ship date could be filled from the last confirmed order instead of copied between threads.",
+    "A weekly diff of the sheet against open email would catch a reply that promises stock the studio no longer has."
+  ],
+  "value_proposition": "The useful conversation is which part of an order a shop could confirm without another email, and which part should stay a personal note from the studio.",
+  "recommended_angle": "Wholesale orders tracked in a spreadsheet while shops still reorder by email."
+}

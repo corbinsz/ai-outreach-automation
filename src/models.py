@@ -5,6 +5,7 @@ when it is parsed, not halfway through an SMTP send.
 """
 
 import os
+import uuid
 from collections.abc import Callable
 from datetime import datetime
 
@@ -80,8 +81,12 @@ class OutreachRecord(BaseModel):
     opened_at and replied_at are filled by the UI, not by a tracking pixel.
     Streamlit on a laptop is not a public endpoint, and a pixel would record
     someone opening mail they did not ask for.
+
+    ``id`` is stable for the life of the row. Follow-up edits use it so they
+    do not depend on "the last line in the file."
     """
 
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     timestamp: str = Field(default_factory=lambda: datetime.now().isoformat())
     prospect_url: str
     prospect_name: str

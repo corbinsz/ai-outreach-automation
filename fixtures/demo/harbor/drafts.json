@@ -1,0 +1,18 @@
+{
+  "professional": {
+    "subject": "Wholesale orders in a spreadsheet",
+    "body": "Hi,\n\nThe wholesale page says wholesale orders are tracked in a spreadsheet, and shops still reorder by email. That works for the first few shops and gets brittle as the line grows.\n\nA short conversation could separate what should stay a personal note from what a shop could confirm without another thread.\n\nWorth a 15-minute chat?\n\n{{sender_name}}"
+  },
+  "conversational": {
+    "subject": "Reorders without another email",
+    "body": "Hi,\n\nHarbor & Pine's wholesale page says wholesale orders are tracked in a spreadsheet, and shops still reorder by email. It reads like a program that is working, and also like one that depends on someone watching the inbox.\n\nI would like to hear which part is actually slow: the sheet, the back-and-forth, or knowing what is on the shelf. If it is useful, we can sketch the smallest change.\n\nOpen to 15 minutes?\n\n{{sender_name}}"
+  },
+  "bold": {
+    "subject": "The wholesale sheet will not scale",
+    "body": "Hi,\n\nWholesale orders are tracked in a spreadsheet, and shops still reorder by email. That will cap how many shops Harbor & Pine can say yes to. The studio voice on the site is careful. The order path is not.\n\nThe question is which step a buyer could finish without waiting on a reply. I would rather check that with you than send a template.\n\nWorth 15 minutes?\n\n{{sender_name}}"
+  },
+  "consultative": {
+    "subject": "What should the shop do alone?",
+    "body": "Hi,\n\nHarbor & Pine is building a wholesale line, and the site says wholesale orders are tracked in a spreadsheet while shops still reorder by email. That pairing usually means the founders are the system.\n\nI would start by asking which part of an order a shop could confirm without you: availability, the terms, or the ship date. The answer decides what is worth taking off the sheet.\n\nWould a 15-minute working session be useful?\n\n{{sender_name}}"
+  }
+}

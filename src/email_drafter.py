@@ -8,7 +8,8 @@ import logging
 
 import anthropic
 
-from src.llm_client import create_message
+from src.config import require_anthropic_api_key
+from src.llm_client import create_message, message_text
 from src.llm_json import parse_llm_json
 from src.models import DEFAULT_MODEL, EmailDraft, NeedAnalysis, resolve_sender_name
 
@@ -70,6 +71,7 @@ def draft_email(
     model: str = DEFAULT_MODEL,
 ) -> EmailDraft:
     """Write one draft. An unknown tone falls back to professional rather than failing closed."""
+    api_key = require_anthropic_api_key(api_key)
     sender_name = resolve_sender_name(sender_name)
     client = anthropic.Anthropic(api_key=api_key)
     tone_desc = TONE_DESCRIPTIONS.get(tone, TONE_DESCRIPTIONS["professional"])
@@ -83,7 +85,7 @@ def draft_email(
 
     logger.info("Generating email draft (tone: %s)...", tone)
     message = create_message(client, model, EMAIL_SYSTEM_PROMPT, user_prompt, max_tokens=1000)
-    data = parse_llm_json(message.content[0].text)
+    data = parse_llm_json(message_text(message))
 
     draft = EmailDraft(
         subject=data["subject"],
