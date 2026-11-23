@@ -44,17 +44,42 @@ class ScrapedPage(BaseModel):
 
 
 class ScrapedWebsite(BaseModel):
-    """What the scraper managed to read. An empty pages list means the fetch failed."""
+    """What the scraper managed to read. An empty pages list means the fetch failed.
+
+    ``scrape_note`` explains an empty result: a private URL, a robots.txt
+    disallow, or a fetch that returned nothing. It stays empty when pages exist.
+    """
 
     base_url: str
     company_name: str = ""
     pages: list[ScrapedPage] = Field(default_factory=list)
     raw_text_summary: str = ""
     contact_emails: list[str] = Field(default_factory=list)
+    scrape_note: str = ""
+
+
+class PageEvidence(BaseModel):
+    """A claim tied to a short quote copied from the scraped pages."""
+
+    claim: str
+    quote: str
+    page: str = ""
+
+
+class Inference(BaseModel):
+    """A guess. It is not a quote, and the screen labels it that way."""
+
+    claim: str
+    basis: str = ""
 
 
 class NeedAnalysis(BaseModel):
-    """Structured notes from Claude. Fields can be inferred, not observed. See the product notes."""
+    """Structured notes. Evidence quotes the page. Inferences are labeled guesses.
+
+    ``prompt_version`` is the instruction set that asked for these notes.
+    Saved samples use a fixed marker instead of the live prompt version.
+    Older saved JSON without these fields still loads.
+    """
 
     company_name: str
     company_summary: str
@@ -64,15 +89,26 @@ class NeedAnalysis(BaseModel):
     ai_opportunities: list[str] = Field(default_factory=list)
     value_proposition: str = ""
     recommended_angle: str = ""
+    evidence: list[PageEvidence] = Field(default_factory=list)
+    inferences: list[Inference] = Field(default_factory=list)
+    prompt_version: str = ""
+    model: str = ""
 
 
 class EmailDraft(BaseModel):
-    """A draft waiting for a person. to_address stays empty until send time."""
+    """A draft waiting for a person. to_address stays empty until send time.
+
+    ``prompt_version`` records which instructions asked for this draft.
+    The review screen shows it so a prompt edit is visible on the draft
+    it produced. Saved samples are marked separately from live drafts.
+    """
 
     to_address: str = ""
     subject: str
     body: str
     tone: str = "professional"
+    prompt_version: str = ""
+    model: str = ""
 
 
 class OutreachRecord(BaseModel):
@@ -99,3 +135,4 @@ class OutreachRecord(BaseModel):
     replied_at: str | None = None
     follow_up_date: str | None = None
     notes: str | None = None
+    prompt_version: str = ""

@@ -12,6 +12,7 @@ row through ``_log_outreach`` instead.
 import json
 import logging
 import smtplib
+import uuid
 from datetime import datetime
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -29,6 +30,11 @@ SMTP_HOST = "smtp.gmail.com"
 SMTP_PORT = 587
 MAX_RETRIES = 3
 LOG_DIR = Path("logs")
+# Well under the Gmail help-page figure of 500 messages a day. This counts
+# rows on this machine with status "sent" and today's local date. It does
+# not ask Gmail how many messages the account has already sent, and demo
+# practice rows do not count. See docs/adr/0005-daily-send-cap.md.
+DAILY_SEND_CAP = 20
 
 RECIPIENT_MESSAGE = (
     "The recipient must be one email address on a single line. "
@@ -81,12 +87,53 @@ def _log_outreach(record: OutreachRecord) -> None:
 
 
 def get_outreach_log() -> list[OutreachRecord]:
-    """Read all outreach records from the log file."""
-    try:
-        return [OutreachRecord(**row) for row in _read_raw_records()]
-    except ValidationError:
-        logger.warning("Outreach log could not be read because a row failed validation.")
-        return []
+    """Read outreach records from the log file.
+
+    A row that fails validation is skipped so one bad line does not hide the
+    rest. A row that has no id is given one and, when every row is readable,
+    the id is written back so later edits can find it.
+    """
+    raw = _read_raw_records()
+    records: list[OutreachRecord] = []
+    changed = False
+    skipped = 0
+    for row in raw:
+        stored = dict(row)
+        if not isinstance(stored.get("id"), str) or not stored["id"].strip():
+            stored["id"] = str(uuid.uuid4())
+            changed = True
+        try:
+            records.append(OutreachRecord.model_validate(stored))
+        except ValidationError:
+            skipped += 1
+    if skipped:
+        logger.warning("Skipped %s outreach log row(s) that failed validation.", skipped)
+    elif changed:
+        _write_raw_records([record.model_dump() for record in records])
+    return records
+
+
+def sends_today(day: str | None = None) -> int:
+    """Count real sends logged on this machine for a local calendar day.
+
+    ``day`` is ``YYYY-MM-DD``. The default is today. Failed rows and demo
+    practice rows are not counted.
+    """
+    prefix = day or datetime.now().date().isoformat()
+    return sum(
+        1
+        for record in get_outreach_log()
+        if record.status == "sent" and record.timestamp.startswith(prefix)
+    )
+
+
+def daily_cap_message(used: int) -> str:
+    """Explain a refused send. The count is from the local log, not from Gmail."""
+    return (
+        f"Daily send cap is {DAILY_SEND_CAP} real emails. "
+        f"{used} are already logged today on this machine. Nothing was sent. "
+        "Demo practice rows do not count. The cap is local and does not ask Gmail."
+    )
 
 
 def _validate_updates(fields: dict[str, object]) -> None:
@@ -181,6 +228,7 @@ def send_email(
         email_subject=safe_subject,
         email_body=draft.body,
         status="pending",
+        prompt_version=draft.prompt_version,
     )
 
     if not _recipient_is_one_address(to_address):
@@ -188,6 +236,10 @@ def send_email(
 
     if gmail_is_unset(gmail_address, gmail_app_password):
         return _fail(record, GMAIL_MISSING_MESSAGE)
+
+    used = sends_today()
+    if used >= DAILY_SEND_CAP:
+        return _fail(record, daily_cap_message(used))
 
     msg = MIMEMultipart("alternative")
     msg["From"] = f"{safe_sender} <{gmail_address.strip()}>"

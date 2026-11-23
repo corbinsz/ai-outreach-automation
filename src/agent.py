@@ -147,7 +147,9 @@ class OutreachAgent:
             result.scraped = self.scrape(url, progress_callback=progress_callback)
 
             if not result.scraped.pages:
-                result.error = "Failed to scrape any content from the website."
+                result.error = (
+                    result.scraped.scrape_note or "Failed to scrape any content from the website."
+                )
                 result.stage = "failed"
                 return result
 

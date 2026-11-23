@@ -2,14 +2,17 @@
 
 import json
 import smtplib
+from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
 from pydantic import ValidationError
 from src.gmail_sender import (
+    DAILY_SEND_CAP,
     _log_outreach,
     get_outreach_log,
     send_email,
+    sends_today,
     update_outreach_record,
     update_outreach_record_by_id,
 )
@@ -21,6 +24,11 @@ def _make_draft() -> EmailDraft:
 
 
 class TestSendEmail:
+    @pytest.fixture(autouse=True)
+    def _isolated_log(self, monkeypatch, tmp_path):
+        """Keep the daily cap from reading a developer's real outreach log."""
+        monkeypatch.setattr("src.gmail_sender.LOG_DIR", tmp_path)
+
     @patch("src.gmail_sender._log_outreach")
     @patch("src.gmail_sender.smtplib.SMTP")
     def test_successful_send(self, mock_smtp_cls, mock_log):
@@ -331,3 +339,86 @@ class TestUpdateOutreachRecord:
             with pytest.raises(KeyError):
                 update_outreach_record_by_id("missing-id", notes="should not land")
         assert (tmp_path / "outreach_log.json").read_text(encoding="utf-8") == original
+
+
+def _sent_row(index: int, *, status: str = "sent", when: str | None = None) -> dict[str, object]:
+    record = OutreachRecord(
+        prospect_url=f"https://example{index}.com",
+        prospect_name=f"Company {index}",
+        recipient_email=f"person{index}@example.com",
+        email_subject="Hello",
+        email_body="Body",
+        status=status,
+        timestamp=when or datetime.now().isoformat(),
+        prompt_version="2026.11.1",
+    )
+    return record.model_dump()
+
+
+class TestDailyCap:
+    def test_cap_refuses_without_opening_smtp(self, tmp_path):
+        rows = [_sent_row(index) for index in range(DAILY_SEND_CAP)]
+        (tmp_path / "outreach_log.json").write_text(json.dumps(rows), encoding="utf-8")
+        with (
+            patch("src.gmail_sender.LOG_DIR", tmp_path),
+            patch("src.gmail_sender.smtplib.SMTP") as mock_smtp,
+        ):
+            result = send_email(
+                draft=_make_draft(),
+                to_address="recipient@example.com",
+                gmail_address="sender@gmail.com",
+                gmail_app_password="abcdefghijklmnop",
+            )
+        assert result.status == "failed"
+        assert result.error_message is not None
+        assert "Daily send cap" in result.error_message
+        mock_smtp.assert_not_called()
+        with patch("src.gmail_sender.LOG_DIR", tmp_path):
+            assert sends_today() == DAILY_SEND_CAP
+
+    def test_demo_rows_and_yesterday_do_not_count(self, tmp_path):
+        yesterday = (datetime.now() - timedelta(days=1)).isoformat()
+        rows = [_sent_row(index, status="demo_sent") for index in range(DAILY_SEND_CAP)]
+        rows.append(_sent_row(100, when=yesterday))
+        (tmp_path / "outreach_log.json").write_text(json.dumps(rows), encoding="utf-8")
+        with (
+            patch("src.gmail_sender.LOG_DIR", tmp_path),
+            patch("src.gmail_sender.smtplib.SMTP") as mock_smtp,
+        ):
+            server = MagicMock()
+            mock_smtp.return_value.__enter__.return_value = server
+            mock_smtp.return_value.__exit__.return_value = False
+            result = send_email(
+                draft=EmailDraft(subject="Hi", body="Hello", prompt_version="2026.11.1"),
+                to_address="recipient@example.com",
+                gmail_address="sender@gmail.com",
+                gmail_app_password="abcdefghijklmnop",
+            )
+        assert result.status == "sent"
+        assert result.prompt_version == "2026.11.1"
+        server.send_message.assert_called_once()
+
+    def test_a_bad_row_does_not_hide_the_rest_of_the_log(self, tmp_path):
+        good = _sent_row(1)
+        (tmp_path / "outreach_log.json").write_text(
+            json.dumps([good, {"prospect_url": "https://broken.example"}]),
+            encoding="utf-8",
+        )
+        with patch("src.gmail_sender.LOG_DIR", tmp_path):
+            records = get_outreach_log()
+        assert len(records) == 1
+        assert records[0].prospect_name == "Company 1"
+        stored = json.loads((tmp_path / "outreach_log.json").read_text(encoding="utf-8"))
+        assert len(stored) == 2
+
+    def test_a_missing_id_is_written_back_once(self, tmp_path):
+        row = _sent_row(1)
+        row.pop("id")
+        (tmp_path / "outreach_log.json").write_text(json.dumps([row]), encoding="utf-8")
+        with patch("src.gmail_sender.LOG_DIR", tmp_path):
+            first = get_outreach_log()
+            second = get_outreach_log()
+        assert first[0].id
+        assert second[0].id == first[0].id
+        stored = json.loads((tmp_path / "outreach_log.json").read_text(encoding="utf-8"))
+        assert stored[0]["id"] == first[0].id

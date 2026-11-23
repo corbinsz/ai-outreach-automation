@@ -4,8 +4,9 @@ import json
 from unittest.mock import MagicMock, patch
 
 import pytest
-from src.analyzer import ANALYSIS_SYSTEM_PROMPT, analyze_prospect
-from src.models import NeedAnalysis, ScrapedPage, ScrapedWebsite
+from src.analyzer import ANALYSIS_SYSTEM_PROMPT, ANALYSIS_USER_PROMPT, analyze_prospect
+from src.models import DEFAULT_MODEL, NeedAnalysis, ScrapedPage, ScrapedWebsite
+from src.prompts import PROMPT_VERSION
 
 VALID_ANALYSIS_JSON = json.dumps(
     {
@@ -136,3 +137,27 @@ class TestAnalyzeProspect:
         lowered = ANALYSIS_SYSTEM_PROMPT.lower()
         assert "analyst" in lowered
         assert "pain" in lowered or "opportunit" in lowered
+        assert "inference" in lowered
+        assert "quote" in ANALYSIS_USER_PROMPT.lower()
+
+    @patch("src.analyzer.anthropic.Anthropic")
+    def test_prompt_version_is_recorded_and_model_fields_are_not_trusted(self, mock_client_cls):
+        payload = json.loads(VALID_ANALYSIS_JSON)
+        payload["evidence"] = [
+            {"claim": "They build widgets.", "quote": "Acme builds widgets.", "page": "homepage"}
+        ]
+        payload["inferences"] = [
+            {"claim": "Inspection is slow.", "basis": "The page does not say that."}
+        ]
+        payload["prompt_version"] = "from-the-model"
+        payload["model"] = "not-the-real-model"
+        client = MagicMock()
+        client.messages.create.return_value = _mock_claude_response(json.dumps(payload))
+        mock_client_cls.return_value = client
+
+        result = analyze_prospect(_make_scraped(), api_key="test-key")
+
+        assert result.prompt_version == PROMPT_VERSION
+        assert result.model == DEFAULT_MODEL
+        assert result.evidence[0].quote == "Acme builds widgets."
+        assert result.inferences[0].basis.startswith("The page")

@@ -18,10 +18,10 @@ Demo mode is the same pipeline with two differences:
 
 `make demo` turns this on. The container defaults to it. A URL that is not one of the samples fails with the sample list, and the failure does not fetch that URL. Live mode is unchanged: it needs an Anthropic key, and a real send needs Gmail.
 
-The saved drafts are checked in tests for length, a banned opener, and a phrase that appears in the saved HTML. That is a guard on the fixtures, not a score of live model output.
+The saved drafts are checked in tests for length, a banned opener, and a phrase that appears in the saved HTML. Saved notes are checked the same way: every quote has to appear on the page, and at least one inference is labeled. That is a guard on the fixtures, not a score of a live model call. The live prompt version is recorded on a live draft so a prompt edit is visible. The review screen can run the string checks on that draft. It still does not call a model to grade it.
 
 ## Consequences
 
-Someone can try the product in a minute, and the repo does not need a public URL. The cost is a second source of drafts that can drift from the live prompt. The tests keep the saved drafts specific. They will not notice if the live prompt gets worse.
+Someone can try the product in a minute, and the repo does not need a public URL. The cost is a second source of drafts that can drift from the live prompt. The tests keep the saved drafts specific. They will not notice if a live model reply gets worse. The prompt version and the review-screen checks make that drift visible. They do not measure it by calling the model.
 
 Demo rows are not counted as sent. A practice confirm must not look like a campaign result. There are still no usage numbers, because demo runs on a laptop are not users.

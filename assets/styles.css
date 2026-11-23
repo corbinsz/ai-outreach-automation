@@ -511,6 +511,55 @@ div[data-testid="stMetric"] label {
     color: #1e2a3a;
     line-height: 1.5;
 }
+.item-evidence, .item-inference {
+    border-radius: 0 8px 8px 0;
+    padding: 0.65rem 1rem;
+    font-size: 0.9rem;
+    color: #1e2a3a;
+    line-height: 1.45;
+}
+.item-evidence {
+    background: rgba(74, 143, 217, 0.06);
+    border-left: 3px solid #4a8fd9;
+}
+.item-inference {
+    background: rgba(220, 140, 30, 0.08);
+    border-left: 3px solid #dc8c1e;
+}
+.quote {
+    margin-top: 0.25rem;
+    color: #3d4a5c;
+    font-size: 0.85rem;
+}
+.check-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    margin: 0.5rem 0 0.25rem;
+}
+.check-row {
+    display: flex;
+    gap: 0.75rem;
+    align-items: flex-start;
+    background: #f5f7fa;
+    border: 1px solid #e2e6ec;
+    border-radius: 8px;
+    padding: 0.45rem 0.75rem;
+    font-size: 0.88rem;
+    color: #1e2a3a;
+}
+.check-pass { border-left: 3px solid #229a3c; }
+.check-fail { border-left: 3px solid #dc8c1e; }
+.check-mark {
+    flex-shrink: 0;
+    width: 5.5rem;
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: #6b7685;
+    padding-top: 0.15rem;
+}
 
 /* ===== Pipeline Step Indicator ===== */
 .pipeline-steps {

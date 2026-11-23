@@ -3,13 +3,19 @@
 Requests is the default because it has no browser to install. Playwright runs
 only when the HTML is too thin to be a real page, which usually means the
 site painted its content with JavaScript. This is not a crawler: one site,
-a page cap, and a pause between requests.
+a page cap, a pause between requests, and a robots.txt check.
+
+The client identifies itself. It does not pretend to be a browser. Private
+and non-web addresses are refused before a socket opens. Redirects are
+followed only when they stay on the same public host.
 """
 
+import ipaddress
 import logging
 import re
 import time
 from urllib.parse import urljoin, urlparse
+from urllib.robotparser import RobotFileParser
 
 import requests
 from bs4 import BeautifulSoup
@@ -52,38 +58,132 @@ STRIP_ELEMENTS = [
     "button",
 ]
 
-# Pretending to be Chrome gets HTML back from simple bot filters. It also
-# hides who is asking. That tradeoff is called out in docs/PRODUCT_NOTES.md.
+# Identifies this tool. A Chrome string fetches more pages and misrepresents
+# the client. Sites that block unknown agents will return less text, and
+# that is the accepted tradeoff. See docs/adr/0004-honest-scrape.md.
+USER_AGENT = (
+    "AIOutreach/1.0 (+https://github.com/corbinsz/ai-outreach-automation; "
+    "personal research; one site, a few pages)"
+)
 DEFAULT_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/120.0.0.0 Safari/537.36"
-    ),
+    "User-Agent": USER_AGENT,
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.5",
 }
 
 REQUEST_TIMEOUT = 15
-# A fixed pause is a courtesy, not compliance. It does not read robots.txt.
+# Pause between pages after the homepage. robots.txt Crawl-delay can raise
+# it, and it is capped so a huge delay cannot stall a run.
 RATE_LIMIT_DELAY = 1.0
+MAX_CRAWL_DELAY = 10.0
 # A cap so one prospect cannot turn into a crawl.
 MAX_PAGES = 8
 MAX_CONTENT_LENGTH = 5000
+# Bound a single response before BeautifulSoup sees it.
+MAX_HTML_CHARS = 1_500_000
+_MAX_REDIRECTS = 5
+
+_BLOCKED_HOST_SUFFIXES = (".localhost", ".local", ".internal")
+_BLOCKED_HOSTS = {
+    "localhost",
+    "localhost.localdomain",
+    "metadata.google.internal",
+}
 
 
-def _fetch_page(url: str, session: requests.Session) -> str | None:
-    """Fetch a single page's HTML content with error handling."""
+def _hostname(netloc: str) -> str:
+    """Return the host without userinfo or a port. IPv6 stays inside the brackets."""
+    host = netloc.lower().strip()
+    if "@" in host:
+        host = host.rsplit("@", 1)[1]
+    if host.startswith("["):
+        end = host.find("]")
+        return host[1:end] if end != -1 else host
+    return host.split(":", 1)[0]
+
+
+def classify_public_url(url: str) -> tuple[str, str]:
+    """Return a normalized public http(s) URL, or an empty URL and the reason.
+
+    Hostnames are not resolved. A public name that later points at a private
+    address is not detected here. Literal private, loopback, and link-local
+    addresses are refused before a request, which is the case a pasted URL
+    can hit directly.
+    """
+    text = url.strip()
+    if not text:
+        return "", "The URL is empty, so nothing was fetched."
+    # A scheme is already present when "://" is. Prepending https would turn
+    # ftp://... into a nonsense URL that still looks fetchable.
+    if "://" not in text:
+        text = "https://" + text
+    parsed = urlparse(text)
+    if parsed.scheme not in {"http", "https"}:
+        return "", "Only http and https pages are fetched."
+    if parsed.username or parsed.password:
+        return "", "The URL includes a username or password, so nothing was fetched."
+    host = _hostname(parsed.netloc)
+    if not host:
+        return "", "The URL has no host, so nothing was fetched."
+    if host in _BLOCKED_HOSTS or host.endswith(_BLOCKED_HOST_SUFFIXES):
+        return "", f"{host} is not a public website, so nothing was fetched."
     try:
-        response = session.get(url, headers=DEFAULT_HEADERS, timeout=REQUEST_TIMEOUT)
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        address = None
+    if address is not None and (
+        address.is_private
+        or address.is_loopback
+        or address.is_link_local
+        or address.is_multicast
+        or address.is_reserved
+        or address.is_unspecified
+    ):
+        return "", f"{host} is not a public website, so nothing was fetched."
+    path = parsed.path or ""
+    normalized = f"{parsed.scheme}://{parsed.netloc}{path}".rstrip("/")
+    if parsed.query:
+        normalized = f"{normalized}?{parsed.query}"
+    return normalized, ""
+
+
+def _same_site(left: str, right: str) -> bool:
+    return _host_key(urlparse(left).netloc) == _host_key(urlparse(right).netloc)
+
+
+def _html_body(text: str) -> str | None:
+    """Keep HTML, including a response that forgot its Content-Type, and cap the size."""
+    if not isinstance(text, str):
+        return None
+    body = text
+    if len(body) > MAX_HTML_CHARS:
+        body = body[:MAX_HTML_CHARS]
+    return body
+
+
+def _looks_like_html(body: str, content_type: str) -> bool:
+    ctype = content_type.lower()
+    if "text/html" in ctype or "application/xhtml" in ctype:
+        return True
+    if ctype.strip():
+        return False
+    start = body.lstrip().lower()
+    return start.startswith(("<!doctype", "<html", "<head", "<body"))
+
+
+def _fetch_page(url: str, session: requests.Session, hops: int = 0) -> str | None:
+    """Fetch one page. Redirects stay on the same public host, up to a few hops."""
+    if hops > _MAX_REDIRECTS:
+        logger.warning(f"Too many redirects for {url}")
+        return None
+    try:
+        response = session.get(
+            url,
+            headers=DEFAULT_HEADERS,
+            timeout=REQUEST_TIMEOUT,
+            allow_redirects=False,
+        )
         response.raise_for_status()
-
-        content_type = response.headers.get("Content-Type", "")
-        if "text/html" not in content_type and "application/xhtml" not in content_type:
-            logger.warning(f"Skipping non-HTML content at {url}: {content_type}")
-            return None
-
-        return response.text
     except requests.exceptions.Timeout:
         logger.warning(f"Timeout fetching {url}")
         return None
@@ -93,6 +193,76 @@ def _fetch_page(url: str, session: requests.Session) -> str | None:
     except requests.exceptions.RequestException as e:
         logger.warning(f"Error fetching {url}: {e}")
         return None
+
+    status = response.status_code if isinstance(response.status_code, int) else 200
+    if status in {301, 302, 303, 307, 308}:
+        location = response.headers.get("Location", "")
+        if not isinstance(location, str) or not location.strip():
+            logger.warning(f"Redirect from {url} had no location")
+            return None
+        nxt = urljoin(url, location.strip())
+        allowed, note = classify_public_url(nxt)
+        if not allowed:
+            logger.warning(f"Refusing redirect from {url}: {note}")
+            return None
+        if not _same_site(url, allowed):
+            logger.warning(f"Refusing cross-host redirect from {url} to {allowed}")
+            return None
+        return _fetch_page(allowed, session, hops + 1)
+
+    content_type = response.headers.get("Content-Type", "")
+    if not isinstance(content_type, str):
+        content_type = ""
+    body = _html_body(response.text)
+    if body is None or not _looks_like_html(body, content_type):
+        logger.warning(f"Skipping non-HTML content at {url}: {content_type}")
+        return None
+    return body
+
+
+def _fetch_robots(session: requests.Session, base_url: str) -> RobotFileParser | None:
+    """Load robots.txt for this host. A missing file means nothing is disallowed.
+
+    A network error is treated the same way: the scrape continues, and the
+    log says the file could not be read. That is a best-effort check, not a
+    guarantee the site wanted the visit.
+    """
+    parsed = urlparse(base_url)
+    robots_url = f"{parsed.scheme}://{parsed.netloc}/robots.txt"
+    try:
+        response = session.get(robots_url, headers=DEFAULT_HEADERS, timeout=REQUEST_TIMEOUT)
+    except requests.exceptions.RequestException as exc:
+        logger.info(f"Could not read robots.txt for {base_url}: {exc}")
+        return None
+    status = response.status_code if isinstance(response.status_code, int) else 0
+    if status >= 400 or status == 0:
+        logger.info(f"No robots.txt at {robots_url} (status {status}). Continuing.")
+        return None
+    parser = RobotFileParser()
+    parser.parse(response.text.splitlines() if isinstance(response.text, str) else [])
+    return parser
+
+
+def _robots_allow(parser: RobotFileParser | None, url: str) -> bool:
+    if parser is None:
+        return True
+    return bool(parser.can_fetch(USER_AGENT, url))
+
+
+def _pause_seconds(parser: RobotFileParser | None) -> float:
+    """Use Crawl-delay when the file sets one, and never wait more than the cap."""
+    if parser is None:
+        return RATE_LIMIT_DELAY
+    delay = parser.crawl_delay(USER_AGENT)
+    if delay is None:
+        delay = parser.crawl_delay("*")
+    if delay is None:
+        return RATE_LIMIT_DELAY
+    try:
+        seconds = float(delay)
+    except (TypeError, ValueError):
+        return RATE_LIMIT_DELAY
+    return min(max(seconds, RATE_LIMIT_DELAY), MAX_CRAWL_DELAY)
 
 
 def _extract_text(html: str) -> str:
@@ -302,7 +472,8 @@ def _try_playwright_fetch(url: str) -> str | None:
 
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
-            page = browser.new_page()
+            context = browser.new_context(user_agent=USER_AGENT)
+            page = context.new_page()
             page.goto(url, wait_until="networkidle", timeout=20000)
             html = page.content()
             browser.close()
@@ -315,6 +486,10 @@ def _try_playwright_fetch(url: str) -> str | None:
         return None
 
 
+def _empty_site(url: str, note: str) -> ScrapedWebsite:
+    return ScrapedWebsite(base_url=url, scrape_note=note)
+
+
 def scrape_website(
     url: str,
     use_playwright_fallback: bool = True,
@@ -322,25 +497,36 @@ def scrape_website(
 ) -> ScrapedWebsite:
     """Fetch the homepage and a handful of internal pages that look relevant.
 
-    A missing scheme is treated as https. The function returns an empty site
-    instead of raising when the homepage cannot be fetched, so a batch can
-    record the failure and move on.
+    A missing scheme is treated as https. Private addresses, credentialed
+    URLs, and a homepage that robots.txt disallows return an empty site and
+    a note, without fetching the page. Other fetch failures also return an
+    empty site so a batch can record the failure and move on.
     """
-    # Normalize URL
-    if not url.startswith(("http://", "https://")):
-        url = "https://" + url
-    url = url.rstrip("/")
+    normalized, rejected = classify_public_url(url)
 
     def _log(msg: str) -> None:
         logger.info(msg)
         if progress_callback:
             progress_callback(msg)
 
+    if not normalized:
+        _log(rejected)
+        return _empty_site(url.strip(), rejected)
+    url = normalized
+
     _log(f"Starting scrape of {url}")
 
     session = requests.Session()
     pages = []
     all_emails: dict[str, None] = {}  # ordered set for dedup across pages
+    robots = _fetch_robots(session, url)
+    pause = _pause_seconds(robots)
+    if robots is not None and not _robots_allow(robots, url):
+        note = f"robots.txt disallows {url}. Nothing was fetched."
+        _log(note)
+        return _empty_site(url, note)
+    if robots is None:
+        _log("No usable robots.txt. Continuing with the page cap.")
 
     # --- Scrape homepage ---
     _log("Fetching homepage...")
@@ -351,8 +537,9 @@ def scrape_website(
         homepage_html = _try_playwright_fetch(url)
 
     if not homepage_html:
-        _log("Failed to fetch homepage. Returning empty result.")
-        return ScrapedWebsite(base_url=url)
+        note = "Failed to fetch the homepage. Nothing was read."
+        _log(note)
+        return _empty_site(url, note)
 
     homepage_text = _extract_text(homepage_html)
     company_name = _extract_company_name(homepage_html, url)
@@ -385,7 +572,15 @@ def scrape_website(
     _log(f"Discovered {len(linked_pages)} internal pages to scrape")
 
     for page_url, page_type in linked_pages:
-        time.sleep(RATE_LIMIT_DELAY)
+        allowed, rejected = classify_public_url(page_url)
+        if not allowed or not _same_site(url, allowed):
+            _log(f"Skipping {page_url}: {rejected or 'off-site link'}")
+            continue
+        if not _robots_allow(robots, allowed):
+            _log(f"Skipping {allowed} because robots.txt disallows it.")
+            continue
+        page_url = allowed
+        time.sleep(pause)
         _log(f"Fetching {page_type} page: {page_url}")
 
         html = _fetch_page(page_url, session)

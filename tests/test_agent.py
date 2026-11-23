@@ -173,3 +173,15 @@ class TestOutreachAgent:
         assert result.error is not None
         assert "make demo" in result.error
         mock_client_cls.assert_not_called()
+
+    @patch("src.agent.scrape_website")
+    def test_scrape_note_explains_a_refused_fetch(self, mock_scrape):
+        mock_scrape.return_value = ScrapedWebsite(
+            base_url="http://127.0.0.1",
+            pages=[],
+            scrape_note="127.0.0.1 is not a public website, so nothing was fetched.",
+        )
+        result = OutreachAgent(_make_config()).run_pipeline(url="http://127.0.0.1")
+        assert result.stage == "failed"
+        assert result.error is not None
+        assert result.error.startswith("127.0.0.1")

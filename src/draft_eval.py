@@ -17,6 +17,7 @@ from pathlib import Path
 from src.confirm_gate import GateReport, measure_confirm_gate
 from src.demo import DEMO_COMPANIES, demo_analysis, demo_draft, demo_scrape
 from src.email_drafter import TONE_DESCRIPTIONS
+from src.prompts import PROMPT_VERSION
 from src.scraper import _extract_text
 
 logger = logging.getLogger(__name__)
@@ -66,6 +67,55 @@ _ASK_PATTERNS: tuple[str, ...] = (
 )
 _NUMBER = re.compile(r"\d+")
 _NAME_WORD = re.compile(r"[A-Za-z][A-Za-z']+")
+_WORD = re.compile(r"[a-z0-9']+")
+_STOPWORDS = frozenset(
+    {
+        "a",
+        "an",
+        "the",
+        "and",
+        "or",
+        "of",
+        "to",
+        "for",
+        "in",
+        "on",
+        "with",
+        "is",
+        "are",
+        "was",
+        "were",
+        "be",
+        "been",
+        "being",
+        "this",
+        "that",
+        "these",
+        "those",
+        "their",
+        "they",
+        "them",
+        "we",
+        "our",
+        "you",
+        "your",
+        "it",
+        "its",
+        "as",
+        "at",
+        "by",
+        "from",
+        "into",
+        "over",
+        "still",
+        "than",
+        "then",
+        "not",
+        "but",
+        "if",
+        "so",
+    }
+)
 
 CHECK_ORDER: tuple[str, ...] = (
     "fact_citation",
@@ -366,6 +416,153 @@ def score_cases(cases: list[EvalCase]) -> list[DraftScore]:
     return [score_case(case) for case in cases]
 
 
+def shared_detail(page_text: str, draft_text: str, width: int = 4) -> str:
+    """Return one 4-word page phrase that also appears in the draft.
+
+    At least two of the words have to be specific (five letters or more, and
+    not a stopword). "the and of a" does not count. The match is exact words
+    in order, so a paraphrase fails. That is the same limitation as the
+    fixture citation check, applied when nobody listed the phrases ahead of time.
+    """
+    words = _WORD.findall(page_text.lower())
+    draft = " ".join(_WORD.findall(draft_text.lower()))
+    if width < 1 or len(words) < width or not draft:
+        return ""
+    seen: set[str] = set()
+    for index in range(len(words) - width + 1):
+        window = words[index : index + width]
+        contentful = [word for word in window if word not in _STOPWORDS and len(word) >= 5]
+        if len(contentful) < 2:
+            continue
+        phrase = " ".join(window)
+        if phrase in seen:
+            continue
+        seen.add(phrase)
+        if phrase in draft:
+            return phrase
+    return ""
+
+
+def score_review(
+    *,
+    company: str,
+    page_text: str,
+    subject: str,
+    body: str,
+    tone: str = "review",
+) -> DraftScore:
+    """Score a draft the person is about to send, against the page just read.
+
+    The fact check looks for a shared phrase. The other five checks are the
+    fixture rubric. A failing row is a warning on the review screen. It does
+    not block confirm.
+    """
+    case = EvalCase(
+        source="review",
+        company=company,
+        tone=tone,
+        page_text=page_text,
+        subject=subject,
+        body=body,
+        facts=("review",),
+    )
+    scored = score_case(case)
+    phrase = shared_detail(page_text, _combined(case))
+    if phrase:
+        fact = CheckResult("fact_citation", True, f"cited {phrase!r}")
+    else:
+        fact = CheckResult(
+            "fact_citation",
+            False,
+            "none of the page's specific 4-word phrases appear in the subject or body",
+        )
+    checks = (fact, *(check for check in scored.checks if check.key != "fact_citation"))
+    return DraftScore("review", company, tone, checks)
+
+
+@dataclass(frozen=True)
+class NoteScore:
+    """How a saved research note separates quotes from guesses."""
+
+    company: str
+    evidence_count: int
+    quotes_on_page: int
+    inference_count: int
+
+    @property
+    def quotes_match(self) -> bool:
+        return self.evidence_count > 0 and self.quotes_on_page == self.evidence_count
+
+    @property
+    def enough_quotes(self) -> bool:
+        return self.evidence_count >= 2
+
+    @property
+    def has_inference(self) -> bool:
+        return self.inference_count >= 1
+
+    @property
+    def passed_all(self) -> bool:
+        return self.quotes_match and self.enough_quotes and self.has_inference
+
+
+def load_demo_notes() -> list[NoteScore]:
+    """Score the saved research notes. Quotes have to appear in the saved pages."""
+    scores: list[NoteScore] = []
+    for company in DEMO_COMPANIES:
+        scraped = demo_scrape(company.url)
+        analysis = demo_analysis(scraped)
+        page = scraped.raw_text_summary.lower()
+        quotes = [item.quote.strip() for item in analysis.evidence if item.quote.strip()]
+        on_page = sum(1 for quote in quotes if quote.lower() in page)
+        scores.append(
+            NoteScore(
+                company=company.name,
+                evidence_count=len(quotes),
+                quotes_on_page=on_page,
+                inference_count=len(analysis.inferences),
+            )
+        )
+    return scores
+
+
+def note_summary_table(scores: list[NoteScore]) -> str:
+    """Pass counts for saved research notes."""
+    total = len(scores)
+    quotes_match = sum(1 for score in scores if score.quotes_match)
+    enough = sum(1 for score in scores if score.enough_quotes)
+    inferred = sum(1 for score in scores if score.has_inference)
+    passed = sum(1 for score in scores if score.passed_all)
+    return "\n".join(
+        [
+            "| Check | Passed |",
+            "| --- | --- |",
+            f"| Every quote is on the page | {quotes_match}/{total} |",
+            f"| At least two quotes | {enough}/{total} |",
+            f"| At least one labeled inference | {inferred}/{total} |",
+            f"| All three checks | {passed}/{total} |",
+        ]
+    )
+
+
+def note_miss_line(scores: list[NoteScore]) -> str:
+    """Name saved notes that fail a research-note check."""
+    parts: list[str] = []
+    for score in scores:
+        misses: list[str] = []
+        if not score.quotes_match:
+            misses.append("Every quote is on the page")
+        if not score.enough_quotes:
+            misses.append("At least two quotes")
+        if not score.has_inference:
+            misses.append("At least one labeled inference")
+        if misses:
+            parts.append(f"{score.company} ({', '.join(misses)})")
+    if not parts:
+        return "Every saved note has quotes from its page and a labeled inference."
+    return "Misses: " + "; ".join(parts) + "."
+
+
 def _count(scores: list[DraftScore], key: str) -> int:
     return sum(1 for score in scores if score.passed(key))
 
@@ -421,6 +618,7 @@ def success_metrics_markdown(
     demo_scores: list[DraftScore] | None = None,
     fixture_scores: list[DraftScore] | None = None,
     gate: GateReport | None = None,
+    note_scores: list[NoteScore] | None = None,
 ) -> str:
     """The Success metrics section, computed from the fixtures.
 
@@ -429,12 +627,23 @@ def success_metrics_markdown(
     """
     demo = score_cases(load_demo_cases()) if demo_scores is None else demo_scores
     fixtures = score_cases(load_eval_cases()) if fixture_scores is None else fixture_scores
+    notes = load_demo_notes() if note_scores is None else note_scores
     measured = measure_confirm_gate() if gate is None else gate
     return "\n".join(
         [
             "## Success metrics",
             "",
             "These figures come from `make eval` on files in this repo. No model was called, no email was sent, and there are no users. Replies, minutes from a URL to a draft someone will send, and how often a person stops on a real list are still unmeasured. There is no campaign to count.",
+            "",
+            f"Prompt version: `{PROMPT_VERSION}`, from `src/prompts.py`. Saved drafts and notes were written by hand. Changing the live prompt does not change these scores until the saved text changes too. The review screen runs the same string checks on the draft in front of you. A failing check does not block confirm.",
+            "",
+            f"### Saved research notes ({len(notes)})",
+            "",
+            "Northwind Analytics and Harbor & Pine Goods. Each saved note keeps quotes copied from the HTML separate from labeled inferences. A quote that is not on the page fails. These notes are not model output.",
+            "",
+            note_summary_table(notes),
+            "",
+            note_miss_line(notes),
             "",
             f"### Saved demo drafts ({len(demo)})",
             "",

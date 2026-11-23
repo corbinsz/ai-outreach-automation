@@ -74,6 +74,9 @@ class TestNeedAnalysis:
         )
         assert len(analysis.pain_points) == 2
         assert analysis.recommended_angle == "Quality control automation"
+        assert analysis.evidence == []
+        assert analysis.inferences == []
+        assert analysis.prompt_version == ""
 
 
 class TestEmailDraft:
@@ -81,6 +84,7 @@ class TestEmailDraft:
         draft = EmailDraft(subject="Hello", body="World")
         assert draft.tone == "professional"
         assert draft.to_address == ""
+        assert draft.prompt_version == ""
 
     def test_full(self):
         draft = EmailDraft(

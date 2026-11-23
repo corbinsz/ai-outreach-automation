@@ -18,5 +18,23 @@
     "A Monday note that flags only the metrics that moved would leave the analysts time to write the interpretation."
   ],
   "value_proposition": "The useful conversation is which of the three sources should refresh on a schedule, and which numbers need one definition before anything is automated.",
-  "recommended_angle": "The Monday leadership pack that is still copied out of three systems."
+  "recommended_angle": "The Monday leadership pack that is still copied out of three systems.",
+  "evidence": [
+    {
+      "claim": "The weekly client pack is still assembled by copying numbers.",
+      "quote": "Weekly client reports are assembled in spreadsheets.",
+      "page": "services"
+    },
+    {
+      "claim": "One leadership pack is fed by three systems.",
+      "quote": "The Monday leadership pack is still copied out of three systems.",
+      "page": "homepage"
+    }
+  ],
+  "inferences": [
+    {
+      "claim": "A scheduled pull from those sources would remove the copy step.",
+      "basis": "The services page describes an analyst pasting numbers from three sources. It does not say the firm wants that automated."
+    }
+  ]
 }

@@ -42,10 +42,11 @@ Live mode is `make run` after you replace `your-anthropic-api-key` in `.env`. Gm
 ## Features
 
 - One URL, or a list. The list drafts only. It does not send.
-- Four tones. You can edit the draft or regenerate it.
-- Send only after Confirm, from your own Gmail, to one address you chose. Live mode does not fill the To field in.
-- A local log where you can mark a note opened or replied, and set a follow-up date. Those marks are manual. There is no tracking pixel.
-- Demo mode: two fictional companies saved in the repo, so the whole path runs with no API key and no network.
+- Notes split a quote copied from the page from a labeled guess. Four tones. You can edit the draft or regenerate it.
+- A checklist compares the draft to the page before you send. It warns. It does not send, and it does not block you.
+- Send only after you tick that you read the draft and press Confirm, from your own Gmail, to one address you chose. Live mode does not fill the To field in. A local cap of 20 real sends per day can refuse the send.
+- A local log where you can mark a note opened or replied, and set a follow-up date. Those marks are manual. There is no tracking pixel. Edits use the row id.
+- Demo mode: two fictional companies saved in the repo, so the whole path runs with no API key and no network. Prompt version `2026.11.1` is recorded on live drafts. See [docs/PROMPT.md](docs/PROMPT.md).
 
 ## How it's built
 
@@ -60,7 +61,7 @@ flowchart TD
     G --> H[Local JSON log]
 ```
 
-Python modules under `src/` do the work. Streamlit is the review screen. Pydantic checks the records passed between steps. Claude writes the live notes and the live draft. Gmail SMTP sends, and only when you confirm. Playwright is optional, for pages that are mostly JavaScript.
+Python modules under `src/` do the work. Streamlit is the review screen. Pydantic checks the records passed between steps. Claude writes the live notes and the live draft. The prompt version is in `src/prompts.py`. Gmail SMTP sends, and only when you confirm. The scraper names itself, skips paths `robots.txt` disallows, and refuses private addresses. Playwright is optional, for pages that are mostly JavaScript, and it uses the same name.
 
 The product write-up is [docs/PRODUCT.md](docs/PRODUCT.md). The engineering notes are [docs/PRODUCT_NOTES.md](docs/PRODUCT_NOTES.md). Short decision records are in [docs/adr](docs/adr/0001-confirm-before-send.md).
 
@@ -82,15 +83,15 @@ ai-outreach-automation/
 make check
 ```
 
-That is Ruff, Black, mypy, and pytest with a coverage report for `src` (the floor is 90%). The suite mocks Claude and SMTP. It does not call the network and does not need keys. Demo-mode tests fail if a sample run touches the network. `make eval` is the offline draft score. GitHub Actions runs the same checks as `make check`.
+That is Ruff, Black, mypy, and pytest with a coverage report for `src` (the floor is 90%). The suite mocks Claude and SMTP. It does not call the network and does not need keys. Demo-mode tests fail if a sample run touches the network. `make eval` is the offline score for saved notes and drafts. GitHub Actions runs `make check` and `make eval`.
 
 ## Limits
 
 A fuller account is in [docs/PRODUCT.md](docs/PRODUCT.md) and [docs/PRODUCT_NOTES.md](docs/PRODUCT_NOTES.md).
 
-- Scraping breaks on odd layouts and on sites that block bots. The scraper does not read `robots.txt`, and its User-Agent pretends to be Chrome.
-- The model will sometimes invent a pain point. The screen shows that text as notes. `make eval` scores saved drafts with string checks. It does not score a live draft, and a copied phrase can still be an unfair sentence.
-- Cold email from a personal Gmail account lands in spam. Google's help page describes a block after more than 500 messages in a day, or one message to more than 500 people: [Limits for sending and getting mail](https://support.google.com/mail/answer/22839). The app does not enforce a daily cap.
+- Scraping still breaks on odd layouts and on sites that block unknown clients. The User-Agent is `AIOutreach/1.0`, and `robots.txt` is checked. A public hostname that points at a private address is not detected. See [docs/adr/0004-honest-scrape.md](docs/adr/0004-honest-scrape.md).
+- The model will sometimes invent a pain point. Quotes and guesses are separate fields, and a thin page shows a warning. `make eval` scores saved text. The review screen runs the same string checks on the draft you are editing. A copied phrase can still be an unfair sentence, and a failing check does not block Confirm.
+- Cold email from a personal Gmail account lands in spam. Google's help page describes a block after more than 500 messages in a day, or one message to more than 500 people: [Limits for sending and getting mail](https://support.google.com/mail/answer/22839). This app stops at 20 real sends logged today on this machine. That is not Gmail's count. See [docs/adr/0005-daily-send-cap.md](docs/adr/0005-daily-send-cap.md).
 - The app does not check that the recipient wants to hear from you. You have to identify yourself, have a reason to write, and stop when someone asks.
 - There are no users and no usage numbers. It is a spare-time project.
 
