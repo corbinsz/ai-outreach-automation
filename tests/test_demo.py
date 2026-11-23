@@ -58,12 +58,16 @@ def test_every_saved_draft_stays_specific_and_short():
         scraped = demo_scrape(company.url)
         analysis = demo_analysis(scraped)
         assert analysis.company_name == company.name
+        assert analysis.prompt_version == "saved-demo"
+        assert analysis.evidence
+        assert analysis.inferences
         for tone in TONE_DESCRIPTIONS:
             draft = demo_draft(analysis, sender_name="Corbin Szenegeto", tone=tone)
             assert len(draft.subject) <= 60
             assert len(draft.body.split()) <= 200
             assert phrase in draft.body.lower()
             assert "Corbin Szenegeto" in draft.body
+            assert draft.prompt_version == "saved-demo"
             lowered = draft.body.lower()
             assert "i hope this email finds you well" not in lowered
             assert not lowered.lstrip().startswith("i noticed your company")

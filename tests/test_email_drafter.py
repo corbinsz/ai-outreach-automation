@@ -5,7 +5,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from src.email_drafter import EMAIL_SYSTEM_PROMPT, TONE_DESCRIPTIONS, draft_email
-from src.models import EmailDraft, NeedAnalysis
+from src.models import DEFAULT_MODEL, EmailDraft, NeedAnalysis
+from src.prompts import PROMPT_VERSION
 
 VALID_DRAFT_JSON = json.dumps(
     {
@@ -48,6 +49,8 @@ class TestDraftEmail:
         assert isinstance(result, EmailDraft)
         assert "QA" in result.subject
         assert "Acme" in result.body
+        assert result.prompt_version == PROMPT_VERSION
+        assert result.model == DEFAULT_MODEL
 
     @patch("src.email_drafter.anthropic.Anthropic")
     def test_markdown_wrapped_response(self, mock_client_cls):
@@ -145,3 +148,4 @@ class TestToneDescriptions:
         lowered = EMAIL_SYSTEM_PROMPT.lower()
         assert "200 words" in EMAIL_SYSTEM_PROMPT or "concise" in lowered
         assert "sender" in lowered
+        assert "different company" in lowered

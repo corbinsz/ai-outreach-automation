@@ -25,8 +25,21 @@ from src.config import (
     load_settings,
 )
 from src.demo import DEMO_COMPANIES
-from src.gmail_sender import get_outreach_log, update_outreach_record, update_outreach_record_by_id
-from src.models import DEFAULT_MODEL, EmailDraft, OutreachRecord, resolve_sender_name
+from src.draft_eval import score_review
+from src.gmail_sender import (
+    DAILY_SEND_CAP,
+    get_outreach_log,
+    sends_today,
+    update_outreach_record_by_id,
+)
+from src.models import (
+    DEFAULT_MODEL,
+    EmailDraft,
+    NeedAnalysis,
+    OutreachRecord,
+    resolve_sender_name,
+)
+from src.prompts import PROMPT_VERSION
 from src.recipients import suggested_recipient
 
 load_dotenv()
@@ -162,6 +175,77 @@ def _follow_up_day(record: OutreachRecord) -> str:
     return when if isinstance(when, str) else ""
 
 
+def _as_date(value: object) -> date | None:
+    """Parse a YYYY-MM-DD value from the log. A bad string does not crash the page."""
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def _render_note_split(analysis: NeedAnalysis) -> None:
+    """Show quotes from the page separately from labeled guesses."""
+    if analysis.evidence:
+        blocks = ['<div class="overview-label">From the page</div><div class="item-list">']
+        for evidence in analysis.evidence:
+            page = f" · {esc(evidence.page)}" if evidence.page else ""
+            blocks.append(
+                '<div class="item-evidence"><div>'
+                f"<div>{esc(evidence.claim)}</div>"
+                f'<div class="quote">“{esc(evidence.quote)}”{page}</div>'
+                "</div></div>"
+            )
+        blocks.append("</div>")
+        st.markdown("".join(blocks), unsafe_allow_html=True)
+    else:
+        st.warning(
+            "These notes do not include a quote from the page. Treat every line as an inference."
+        )
+    if not analysis.inferences:
+        return
+    blocks = [
+        '<div class="overview-label" style="margin-top:0.75rem;">Inferences</div>',
+        '<div class="item-list">',
+    ]
+    for guess in analysis.inferences:
+        basis = f'<div class="quote">{esc(guess.basis)}</div>' if guess.basis else ""
+        blocks.append(
+            f'<div class="item-inference"><div><div>{esc(guess.claim)}</div>{basis}</div></div>'
+        )
+    blocks.append("</div>")
+    st.markdown("".join(blocks), unsafe_allow_html=True)
+
+
+def _render_draft_checks(company: str, page_text: str, subject: str, body: str) -> None:
+    """Show the offline rubric against the draft currently on screen.
+
+    A failing row is a warning. Confirm stays available once the person says
+    they read the draft. The checks do not send anything.
+    """
+    score = score_review(
+        company=company or "Company",
+        page_text=page_text,
+        subject=subject,
+        body=body,
+    )
+    rows = ['<div class="check-list">']
+    for check in score.checks:
+        kind = "check-pass" if check.passed else "check-fail"
+        mark = "Pass" if check.passed else "Look again"
+        rows.append(
+            f'<div class="check-row {kind}"><span class="check-mark">{mark}</span>'
+            f"<div><strong>{esc(check.label)}</strong> — {esc(check.detail)}</div></div>"
+        )
+    rows.append("</div>")
+    st.markdown("".join(rows), unsafe_allow_html=True)
+    st.caption(
+        "These checks compare the draft to the page text. They do not block Confirm. "
+        "A copied phrase can still be an unfair sentence."
+    )
+
+
 def _status_badge(record: OutreachRecord) -> tuple[str, str]:
     """Return the short label and CSS class for one log row."""
     if record.replied_at:
@@ -266,7 +350,8 @@ def render_sidebar() -> None:
         st.markdown(
             '<div class="sidebar-footer">'
             "Live analysis runs on Claude.<br>"
-            "Sending uses your own Gmail app password."
+            "Sending uses your own Gmail app password.<br>"
+            f"Live prompt {esc(PROMPT_VERSION)}."
             "</div>",
             unsafe_allow_html=True,
         )
@@ -442,6 +527,7 @@ def render_single_mode() -> None:
             f"</div>"
         )
         st.markdown(overview_html, unsafe_allow_html=True)
+        _render_note_split(analysis)
 
         col_a, col_b = st.columns(2)
         with col_a:
@@ -525,6 +611,13 @@ def render_single_mode() -> None:
         st.session_state["email_subject"] = edited_subject
         st.session_state["email_body"] = edited_body
 
+        company_name = result.analysis.company_name if result.analysis else ""
+        page_text = result.scraped.raw_text_summary if result.scraped is not None else ""
+        recorded = result.draft.prompt_version or "unversioned"
+        model_name = result.draft.model or "saved sample, no model call"
+        st.caption(f"Prompt {recorded}. Model: {model_name}.")
+        _render_draft_checks(company_name, page_text, edited_subject, edited_body)
+
         st.markdown("---")
         st.markdown(
             section_header(
@@ -572,6 +665,30 @@ def render_single_mode() -> None:
             help="Who should receive this one email. Demo mode will not deliver it.",
         )
 
+        cap_reached = False
+        if demo_mode:
+            st.caption(
+                f"A practice row does not count toward the daily cap of {DAILY_SEND_CAP} real sends."
+            )
+        else:
+            used = sends_today()
+            st.caption(
+                f"{used} of {DAILY_SEND_CAP} real sends are logged today on this machine. "
+                "The cap does not ask Gmail, and it does not count practice rows."
+            )
+            cap_reached = used >= DAILY_SEND_CAP
+            if cap_reached:
+                st.warning("Today's cap is reached. Confirm will not open a mail connection.")
+
+        recipient = to_address.strip()
+        if demo_mode:
+            review_label = "I read this draft. Confirm only saves a practice row on this machine."
+        elif recipient:
+            review_label = f"I read this draft and mean to email {recipient} only."
+        else:
+            review_label = "I read this draft and mean to email the one address above."
+        reviewed = st.checkbox(review_label, key=f"reviewed_{version}_{recipient}")
+
         col_send, col_regen = st.columns(2)
         with col_regen:
             if st.button("Regenerate Draft", use_container_width=True, key="regenerate_draft"):
@@ -600,7 +717,7 @@ def render_single_mode() -> None:
                 "Confirm & Send" if not demo_mode else "Confirm practice send",
                 type="primary",
                 use_container_width=True,
-                disabled=not to_address.strip(),
+                disabled=not recipient or not reviewed or cap_reached,
                 key="confirm_send",
             )
 
@@ -616,6 +733,8 @@ def render_single_mode() -> None:
                     body=_state_str("email_body"),
                     to_address=to_address.strip(),
                     tone=config.tone,
+                    prompt_version=result.draft.prompt_version,
+                    model=result.draft.model,
                 )
                 with st.spinner("Saving..." if config.demo_mode else "Sending email..."):
                     sent = OutreachAgent(config).send(
@@ -776,6 +895,10 @@ def render_batch_mode() -> None:
             if item.analysis:
                 st.markdown(f"**Industry:** {item.analysis.industry}")
                 st.markdown(f"**Summary:** {item.analysis.company_summary}")
+                if item.analysis.evidence:
+                    st.markdown(f"**From the page:** {item.analysis.evidence[0].quote}")
+                if item.analysis.inferences:
+                    st.markdown(f"**Inference:** {item.analysis.inferences[0].claim}")
                 pain = item.analysis.pain_points[0] if item.analysis.pain_points else "N/A"
                 st.markdown(f"**Key Pain Point:** {pain}")
             if item.draft:
@@ -834,11 +957,12 @@ def render_outreach_log() -> None:
         badge, css_class = _status_badge(record)
         status_html = f'<span class="{css_class}">{badge}</span>'
         fu_label = ""
-        if record.follow_up_date and not record.replied_at:
-            if record.follow_up_date <= today_str:
+        follow_day = _as_date(record.follow_up_date)
+        if follow_day and not record.replied_at:
+            if follow_day.isoformat() <= today_str:
                 fu_label = " | FOLLOW-UP DUE"
             else:
-                fu_label = f" | Follow-up: {record.follow_up_date}"
+                fu_label = f" | Follow-up: {follow_day.isoformat()}"
         expander_label = (
             f"{badge} | {record.prospect_name or record.prospect_url} "
             f"→ {record.recipient_email}{fu_label}"
@@ -850,16 +974,16 @@ def render_outreach_log() -> None:
             col2.metric("Recipient", record.recipient_email)
             col3.metric("Time", record.timestamp[:19])
 
-            if record.follow_up_date and not record.replied_at:
-                if record.follow_up_date <= today_str:
-                    days_overdue = (date.today() - date.fromisoformat(record.follow_up_date)).days
+            if follow_day and not record.replied_at:
+                if follow_day.isoformat() <= today_str:
+                    days_overdue = (date.today() - follow_day).days
                     st.markdown(
                         f'<span class="follow-up-due">FOLLOW-UP OVERDUE by {days_overdue} day(s)</span>',
                         unsafe_allow_html=True,
                     )
                 else:
                     st.markdown(
-                        f'<span class="follow-up-upcoming">Follow-up scheduled: {record.follow_up_date}</span>',
+                        f'<span class="follow-up-upcoming">Follow-up scheduled: {follow_day.isoformat()}</span>',
                         unsafe_allow_html=True,
                     )
 
@@ -881,15 +1005,19 @@ def render_outreach_log() -> None:
                 act_cols = st.columns(4)
                 with act_cols[0]:
                     if not record.opened_at:
-                        if st.button("Mark as Opened", key=f"open_{idx}"):
-                            update_outreach_record(idx, opened_at=datetime.now().isoformat())
+                        if st.button("Mark as Opened", key=f"open_{record.id}"):
+                            update_outreach_record_by_id(
+                                record.id, opened_at=datetime.now().isoformat()
+                            )
                             st.rerun()
                     else:
                         st.caption(f"Opened: {record.opened_at[:19]}")
                 with act_cols[1]:
                     if not record.replied_at:
-                        if st.button("Mark as Replied", key=f"reply_{idx}"):
-                            update_outreach_record(idx, replied_at=datetime.now().isoformat())
+                        if st.button("Mark as Replied", key=f"reply_{record.id}"):
+                            update_outreach_record_by_id(
+                                record.id, replied_at=datetime.now().isoformat()
+                            )
                             st.rerun()
                     else:
                         st.caption(f"Replied: {record.replied_at[:19]}")
@@ -900,9 +1028,11 @@ def render_outreach_log() -> None:
                             value=date.today() + timedelta(days=3),
                             key=f"fu_date_{idx}",
                         )
-                        if st.button("Set Follow-Up", key=f"fu_set_{idx}"):
+                        if st.button("Set Follow-Up", key=f"fu_set_{record.id}"):
                             chosen = fu_date if isinstance(fu_date, date) else date.today()
-                            update_outreach_record(idx, follow_up_date=chosen.isoformat())
+                            update_outreach_record_by_id(
+                                record.id, follow_up_date=chosen.isoformat()
+                            )
                             st.rerun()
                 with act_cols[3]:
                     new_note = st.text_input(
@@ -913,7 +1043,7 @@ def render_outreach_log() -> None:
                     if st.button("Save Note", key=f"note_save_{idx}") and new_note:
                         existing = record.notes or ""
                         combined = f"{existing}\n{new_note}".strip() if existing else new_note
-                        update_outreach_record(idx, notes=combined)
+                        update_outreach_record_by_id(record.id, notes=combined)
                         st.rerun()
 
 
@@ -939,7 +1069,7 @@ def render_follow_up_dashboard() -> None:
     follow_ups = [
         (idx, record)
         for idx, record in enumerate(records)
-        if record.follow_up_date and not record.replied_at
+        if _as_date(record.follow_up_date) is not None and not record.replied_at
     ]
     if not follow_ups:
         st.info(
@@ -957,9 +1087,10 @@ def render_follow_up_dashboard() -> None:
 
     if overdue:
         st.markdown(f"### Overdue ({len(overdue)})")
-        for idx, record in overdue:
-            assert record.follow_up_date is not None
-            days_overdue = (today - date.fromisoformat(record.follow_up_date)).days
+        for _idx, record in overdue:
+            follow_day = _as_date(record.follow_up_date)
+            assert follow_day is not None
+            days_overdue = (today - follow_day).days
             with st.expander(
                 f"OVERDUE ({days_overdue}d) | {record.prospect_name or record.prospect_url} "
                 f"→ {record.recipient_email}"
@@ -973,27 +1104,30 @@ def render_follow_up_dashboard() -> None:
                     st.markdown(f"**Notes:** {record.notes}")
                 c1, c2 = st.columns(2)
                 with c1:
-                    if st.button("Mark as Replied", key=f"fu_reply_{idx}"):
-                        update_outreach_record(idx, replied_at=datetime.now().isoformat())
+                    if st.button("Mark as Replied", key=f"fu_reply_{record.id}"):
+                        update_outreach_record_by_id(
+                            record.id, replied_at=datetime.now().isoformat()
+                        )
                         st.rerun()
                 with c2:
                     snooze_days = st.selectbox(
                         "Snooze",
                         options=[1, 2, 3, 5, 7],
                         index=0,
-                        key=f"snooze_sel_{idx}",
+                        key=f"snooze_sel_{record.id}",
                     )
-                    if st.button("Snooze", key=f"snooze_{idx}"):
+                    if st.button("Snooze", key=f"snooze_{record.id}"):
                         days = snooze_days if isinstance(snooze_days, int) else 1
                         new_date = (today + timedelta(days=days)).isoformat()
-                        update_outreach_record(idx, follow_up_date=new_date)
+                        update_outreach_record_by_id(record.id, follow_up_date=new_date)
                         st.rerun()
 
     if upcoming:
         st.markdown(f"### Upcoming — Next 7 Days ({len(upcoming)})")
-        for idx, record in upcoming:
-            assert record.follow_up_date is not None
-            days_until = (date.fromisoformat(record.follow_up_date) - today).days
+        for _idx, record in upcoming:
+            follow_day = _as_date(record.follow_up_date)
+            assert follow_day is not None
+            days_until = (follow_day - today).days
             with st.expander(
                 f"In {days_until}d ({record.follow_up_date}) | "
                 f"{record.prospect_name or record.prospect_url} → {record.recipient_email}"
@@ -1007,29 +1141,30 @@ def render_follow_up_dashboard() -> None:
                     st.markdown(f"**Notes:** {record.notes}")
                 c1, c2 = st.columns(2)
                 with c1:
-                    if st.button("Mark as Replied", key=f"fu_reply_{idx}"):
-                        update_outreach_record(idx, replied_at=datetime.now().isoformat())
+                    if st.button("Mark as Replied", key=f"fu_up_reply_{record.id}"):
+                        update_outreach_record_by_id(
+                            record.id, replied_at=datetime.now().isoformat()
+                        )
                         st.rerun()
                 with c2:
                     snooze_days = st.selectbox(
                         "Snooze",
                         options=[1, 2, 3, 5, 7],
                         index=0,
-                        key=f"snooze_sel_{idx}",
+                        key=f"snooze_up_sel_{record.id}",
                     )
-                    if st.button("Snooze", key=f"snooze_{idx}"):
+                    if st.button("Snooze", key=f"snooze_up_{record.id}"):
                         days = snooze_days if isinstance(snooze_days, int) else 1
-                        new_date = (
-                            date.fromisoformat(record.follow_up_date) + timedelta(days=days)
-                        ).isoformat()
-                        update_outreach_record(idx, follow_up_date=new_date)
+                        new_date = (follow_day + timedelta(days=days)).isoformat()
+                        update_outreach_record_by_id(record.id, follow_up_date=new_date)
                         st.rerun()
 
     if later:
         st.markdown(f"### Later ({len(later)})")
         for _idx, record in later:
-            assert record.follow_up_date is not None
-            days_until = (date.fromisoformat(record.follow_up_date) - today).days
+            follow_day = _as_date(record.follow_up_date)
+            assert follow_day is not None
+            days_until = (follow_day - today).days
             st.markdown(
                 f"- **{record.follow_up_date}** ({days_until}d) — "
                 f"{record.prospect_name or record.prospect_url} → {record.recipient_email}"
@@ -1084,9 +1219,9 @@ def main() -> None:
 | Step | What Happens |
 |------|-------------|
 | **1. Web Scraping** | Fetches the prospect's website (homepage plus a few pages such as About, Services, and Contact) and extracts text. Demo mode loads saved pages instead. |
-| **2. Need Analysis** | Claude returns industry, pain points, and places where data or operations work could help. Demo mode loads saved notes. |
-| **3. Email Drafting** | Claude writes one email that references the pages. Demo mode loads a saved draft for the tone you picked. |
-| **4. Review & Send** | You edit the draft and confirm. Nothing is mailed until then. Demo mode records the confirm locally and does not email. |
+| **2. Need Analysis** | Claude separates quotes copied from the page from labeled inferences. Demo mode loads saved notes in that same shape. |
+| **3. Email Drafting** | Claude writes one email that has to name the company and use a detail from the notes. Demo mode loads a saved draft for the tone you picked. The prompt version is shown on the draft. |
+| **4. Review & Send** | You edit the draft, read the quality checks, and tick that you read it. Nothing is mailed until Confirm. A local daily cap can refuse a real send. Demo mode records the confirm locally and does not email. |
 
 Gmail is only used on a live confirm. Batch mode never sends.
             """)

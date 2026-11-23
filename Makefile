@@ -1,5 +1,5 @@
-# One-command setup and the same checks CI runs.
-# Python 3.10+ is required. `make demo` needs no API key.
+# `make demo` is the quickstart. The first run creates the virtualenv.
+# Python 3.10+ is required. Demo mode needs no API key.
 
 PYTHON ?= python3
 ifneq ($(wildcard .venv/bin/python),)
@@ -18,10 +18,12 @@ setup:
 	@echo "Setup complete. Try the app with no API key: make demo"
 
 demo:
-	DEMO_MODE=1 $(PYTHON) -m streamlit run app.py --server.address 127.0.0.1
+	@if [ ! -x .venv/bin/python ]; then $(MAKE) setup; fi
+	DEMO_MODE=1 .venv/bin/python -m streamlit run app.py --server.address 127.0.0.1
 
 run:
-	DEMO_MODE=0 $(PYTHON) -m streamlit run app.py --server.address 127.0.0.1
+	@if [ ! -x .venv/bin/python ]; then $(MAKE) setup; fi
+	DEMO_MODE=0 .venv/bin/python -m streamlit run app.py --server.address 127.0.0.1
 
 eval:
 	$(PYTHON) -m src.draft_eval

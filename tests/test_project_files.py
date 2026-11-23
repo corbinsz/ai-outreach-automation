@@ -90,6 +90,7 @@ def test_setup_entry_points_exist():
     makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
     assert "setup:" in makefile
     assert "demo:" in makefile
+    assert "if [ ! -x .venv/bin/python ]" in makefile
     assert "eval:" in makefile
     dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
     assert "DEMO_MODE=1" in dockerfile

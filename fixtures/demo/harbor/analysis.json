@@ -18,5 +18,23 @@
     "A weekly diff of the sheet against open email would catch a reply that promises stock the studio no longer has."
   ],
   "value_proposition": "The useful conversation is which part of an order a shop could confirm without another email, and which part should stay a personal note from the studio.",
-  "recommended_angle": "Wholesale orders tracked in a spreadsheet while shops still reorder by email."
+  "recommended_angle": "Wholesale orders tracked in a spreadsheet while shops still reorder by email.",
+  "evidence": [
+    {
+      "claim": "Wholesale orders still live in a spreadsheet and an email thread.",
+      "quote": "Wholesale orders are tracked in a spreadsheet, and shops still reorder by email.",
+      "page": "services"
+    },
+    {
+      "claim": "The founders still answer the shops themselves.",
+      "quote": "We still answer every shop ourselves.",
+      "page": "homepage"
+    }
+  ],
+  "inferences": [
+    {
+      "claim": "The sheet and the inbox can disagree about what is on the shelf.",
+      "basis": "The wholesale page says the sheet gets a week behind the shelf when two people answer the same thread. It does not show a specific missed order."
+    }
+  ]
 }

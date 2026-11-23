@@ -31,6 +31,21 @@ Someone reading the repo can also run it. Demo mode exists for that person. It i
 
 These figures come from `make eval` on files in this repo. No model was called, no email was sent, and there are no users. Replies, minutes from a URL to a draft someone will send, and how often a person stops on a real list are still unmeasured. There is no campaign to count.
 
+Prompt version: `2026.11.1`, from `src/prompts.py`. Saved drafts and notes were written by hand. Changing the live prompt does not change these scores until the saved text changes too. The review screen runs the same string checks on the draft in front of you. A failing check does not block confirm.
+
+### Saved research notes (2)
+
+Northwind Analytics and Harbor & Pine Goods. Each saved note keeps quotes copied from the HTML separate from labeled inferences. A quote that is not on the page fails. These notes are not model output.
+
+| Check | Passed |
+| --- | --- |
+| Every quote is on the page | 2/2 |
+| At least two quotes | 2/2 |
+| At least one labeled inference | 2/2 |
+| All three checks | 2/2 |
+
+Every saved note has quotes from its page and a labeled inference.
+
 ### Saved demo drafts (8)
 
 Northwind Analytics and Harbor & Pine Goods, four tones each. These are the drafts `make demo` shows. The page text is the saved HTML. The rubric is [DRAFT_RUBRIC.md](DRAFT_RUBRIC.md).
@@ -41,11 +56,11 @@ Northwind Analytics and Harbor & Pine Goods, four tones each. These are the draf
 | Length within target | 8/8 |
 | No banned phrase | 8/8 |
 | No invented number | 8/8 |
-| Names the company | 6/8 |
+| Names the company | 8/8 |
 | Clear ask | 8/8 |
-| All six checks | 6/8 |
+| All six checks | 8/8 |
 
-Misses: Northwind Analytics / professional (Names the company); Harbor & Pine Goods / professional (Names the company).
+Every draft in this set passed all six checks.
 
 ### Fixture drafts (12)
 
@@ -94,15 +109,15 @@ The gate stopped a send in 8 of 9 runs that produced a draft. 5 runs produced no
 - **Purchased lists and blast sends.** The confirm step is one address. A comma-separated list is rejected.
 - **A CRM, a database server, or a hosted log.** A JSON file on the laptop is enough to see what was sent. It is a bad multi-user store.
 - **An agent framework.** Four functions with typed records between them are easier to test than a framework that hides the handoff. See the engineering notes.
-- **Scoring a live model draft.** `make eval` scores saved text with string checks. It does not call Claude. A paraphrase of a true fact fails the citation check. I still read the draft before confirm.
+- **A model judge.** `make eval` scores saved text with string checks. It does not call Claude. The review screen runs those same checks on the draft in front of you. A paraphrase of a true fact fails the citation check, and a failing check does not block confirm.
 
 ## Risks
 
 Cold email can be illegal, against a site's terms, or simply unwanted. The app does not know the rules where you or the recipient live, does not add an unsubscribe link, and does not check that you have a relationship with the person. Scraping a site and writing to an address published there can violate the site's terms.
 
-Claude will sometimes invent a pain point, especially when the page is thin. The screen labels the result as notes. A thin page gets a warning. The offline eval can catch a digit that is not on the page and a missing phrase. It cannot tell whether a paraphrase is fair, and a low score does not block confirm.
+Claude will sometimes invent a pain point, especially when the page is thin. The notes now keep a copied quote separate from a labeled inference, and a thin page still gets a warning. The offline checks can catch a digit that is not on the page, a missing phrase, and a quote that is not actually on the page. They cannot tell whether a paraphrase is fair, and a failing check does not block confirm.
 
-Mail from a personal Gmail account is easy for spam filters to drop. Google's own help page describes a block after more than 500 messages in a day, or one message to more than 500 people ([Limits for sending and getting mail](https://support.google.com/mail/answer/22839)). That number is Google's, it can change, and looking like a blast can limit an account sooner. This app enforces no daily cap.
+Mail from a personal Gmail account is easy for spam filters to drop. Google's own help page describes a block after more than 500 messages in a day, or one message to more than 500 people ([Limits for sending and getting mail](https://support.google.com/mail/answer/22839)). That number is Google's, it can change, and looking like a blast can limit an account sooner. This app stops at 20 real sends logged today on this machine. That count is the local log, not Gmail's, and a practice row does not count. See [ADR 0005](adr/0005-daily-send-cap.md).
 
 The log stores the subject and body of every attempt, including failures, in a local file that is not encrypted.
 
@@ -111,8 +126,9 @@ The log stores the subject and body of every attempt, including failures, in a l
 This is the safeguard, and it is also [ADR 0001](adr/0001-confirm-before-send.md).
 
 - The pipeline stops at a draft.
-- The screen sends only after Confirm, and only to the one address in the To field.
+- The screen shows a quality checklist, then sends only after a checkbox that the draft was read and Confirm, and only to the one address in the To field. The checklist does not block Confirm.
 - Live mode does not fill that field in. The person chooses.
+- A local cap of 20 real sends per day can refuse Confirm. It does not send on its own. See [ADR 0005](adr/0005-daily-send-cap.md).
 - Batch mode cannot send.
 - There is no scheduler.
 - Demo mode's confirm writes a local row and does not open a mail connection. See [ADR 0003](adr/0003-offline-demo-mode.md).
@@ -132,16 +148,16 @@ flowchart TD
     G --> H[Local JSON log]
 ```
 
-Python, Streamlit, BeautifulSoup, Pydantic, the Anthropic API, and Gmail SMTP. Playwright is an optional fallback when a page is mostly JavaScript. Demo mode uses none of the network.
+Python, Streamlit, BeautifulSoup, Pydantic, the Anthropic API, and Gmail SMTP. Playwright is an optional fallback when a page is mostly JavaScript, and it sends the same identifiable User-Agent. Demo mode uses none of the network. The prompt text and its version live in `src/prompts.py`.
 
 ## Roadmap
 
 In the order I would actually do them. Items already done are marked so this list does not pretend they are still open.
 
-1. **Done for saved drafts, open for live ones.** `make eval` scores the demo drafts and 12 fictional pages. A live prompt change is still unmeasured.
-2. **Partly done.** Live mode does not prefill the recipient, and a thin page shows a warning. There is still no split between a quote and a guess.
-3. **Open.** An identifiable User-Agent and a `robots.txt` check. The scraper still pretends to be Chrome.
-4. **Open.** A small daily send cap, well under Gmail's published limit, counted from the log. OAuth only if someone other than me sends.
-5. **Partly done.** New rows have an id, and the follow-up button uses it. SQLite is still unnecessary while this is one person and one file.
+1. **Partly done.** `make eval` scores the saved notes, the demo drafts, and 12 fictional pages. The review screen runs the same string checks on the draft being edited. A live prompt change is recorded as `PROMPT_VERSION` in [PROMPT.md](PROMPT.md). The saved scores do not move until the saved text changes.
+2. **Done for the note shape.** Quotes and inferences are separate fields, and the screen labels them. There is still no numeric confidence, and a model can still put a paraphrase in the quote field. The eval catches that only for the saved samples.
+3. **Done for the honest client.** The User-Agent identifies this tool, `robots.txt` can disallow a page, and Crawl-delay is honored up to 10 seconds. A private or non-web address is refused before a request, including a hostname that resolves to one. An address that changes after the lookup is still a gap. See [ADR 0004](adr/0004-honest-scrape.md).
+4. **Done for a local cap.** The app refuses a real send after 20 `sent` rows logged today. It does not ask Gmail, and it does not count practice rows. OAuth only if someone other than me sends. See [ADR 0005](adr/0005-daily-send-cap.md).
+5. **Partly done.** New rows have an id. The log and the follow-up list edit by that id. A row that was saved without an id gets one the next time the log is read. SQLite is still unnecessary while this is one person and one file.
 
 I am not planning a public deployment, unsupervised sending, or a tracking pixel.

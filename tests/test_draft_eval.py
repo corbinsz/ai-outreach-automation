@@ -13,15 +13,18 @@ from src.draft_eval import (
     build_case,
     invented_numbers,
     load_demo_cases,
+    load_demo_notes,
     load_eval_cases,
     main,
     miss_line,
     name_token,
     score_case,
     score_cases,
+    score_review,
     success_metrics_markdown,
 )
 from src.models import EmailDraft, OutreachRecord
+from src.prompts import PROMPT_VERSION
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -50,19 +53,20 @@ def _case(
     )
 
 
-def test_saved_demo_drafts_cite_the_page_and_two_do_not_name_the_company():
-    scores = {(item.company, item.tone): item for item in score_cases(load_demo_cases())}
+def test_saved_demo_drafts_cite_the_page_and_name_the_company():
+    cases = load_demo_cases()
+    scores = {(item.company, item.tone): item for item in score_cases(cases)}
     assert len(scores) == 8
-    for company in ("Northwind Analytics", "Harbor & Pine Goods"):
-        professional = scores[(company, "professional")]
-        assert professional.failed_labels == ("Names the company",)
-        assert professional.passed("fact_citation")
-        assert professional.passed("clear_ask")
-    named = [
-        scores[("Northwind Analytics", "bold")],
-        scores[("Harbor & Pine Goods", "consultative")],
-    ]
-    assert all(item.passed_all for item in named)
+    assert all(item.passed_all for item in scores.values())
+    for case in cases:
+        review = score_review(
+            company=case.company,
+            page_text=case.page_text,
+            subject=case.subject,
+            body=case.body,
+            tone=case.tone,
+        )
+        assert review.passed_all, (case.company, case.tone, review.failed_labels)
 
 
 def test_fixture_set_has_twelve_pages_and_every_check_can_fail():
@@ -82,8 +86,55 @@ def test_product_note_matches_the_eval_output():
     text = (ROOT / "docs" / "PRODUCT.md").read_text(encoding="utf-8")
     assert block in text
     assert "8 of 9" in block
-    assert "6/8" in block
+    assert "All six checks | 8/8" in block
+    assert "Every draft in this set passed all six checks." in block
     assert "5/12" in block
+    assert PROMPT_VERSION in block
+    assert "Saved research notes" in block
+
+
+def test_saved_notes_quote_the_page_and_label_a_guess():
+    notes = load_demo_notes()
+    assert [note.company for note in notes] == ["Northwind Analytics", "Harbor & Pine Goods"]
+    assert all(note.passed_all for note in notes)
+
+
+def test_review_score_flags_a_generic_draft_and_accepts_a_specific_one():
+    page = (
+        "Northwind Analytics helps regional manufacturers. "
+        "Weekly client reports are assembled in spreadsheets by the analysts."
+    )
+    generic = score_review(
+        company="Northwind Analytics",
+        page_text=page,
+        subject="Quick hello",
+        body="I hope this email finds you well.\n\nWorth a 15-minute chat?\n\nAlex",
+    )
+    assert generic.passed("banned_phrase") is False
+    assert generic.passed("fact_citation") is False
+    body = (
+        "Hi,\n\nNorthwind Analytics says weekly client reports are assembled in spreadsheets. "
+        "The analysts paste the same numbers into a leadership pack, and that is the step "
+        "I would want to understand before suggesting anything else. A short conversation "
+        "could decide whether a scheduled refresh is even the right change.\n\n"
+        "Worth a 15-minute chat?\n\nAlex"
+    )
+    specific = score_review(
+        company="Northwind Analytics",
+        page_text=page,
+        subject="The spreadsheet pack",
+        body=body,
+    )
+    assert specific.passed_all
+
+
+def test_review_screen_shows_the_rubric_and_requires_a_read_checkbox():
+    text = (ROOT / "app.py").read_text(encoding="utf-8")
+    assert "I read this draft" in text
+    assert "score_review" in text
+    assert "auto_send" not in text
+    assert "update_outreach_record_by_id" in text
+    assert "update_outreach_record(" not in text
 
 
 def test_confirm_gate_stops_eight_of_nine_drafts_and_the_screen_cannot_bypass():

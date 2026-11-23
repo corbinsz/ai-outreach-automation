@@ -23,10 +23,10 @@ flowchart TD
     G --> H[Local JSON log]
 ```
 
-1. The scraper fetches the homepage and follows internal links whose path or text looks like About, Services, Blog, Contact, and a few similar words. It keeps at most 8 pages and waits 1 second between requests after the homepage.
-2. Claude receives the text and returns JSON: summary, industry, services, pain points, opportunities, a short value note, and one angle.
-3. A second Claude call writes one email in a chosen tone. The sign-off is `SENDER_NAME`, or whatever is typed in the sidebar.
-4. The screen shows the draft. Nothing is mailed until Confirm is pressed. Batch mode never reaches send.
+1. The scraper fetches the homepage and follows internal links whose path or text looks like About, Services, Blog, Contact, and a few similar words. It keeps at most 8 pages. It sends `AIOutreach/1.0`, reads `robots.txt`, and waits at least 1 second between requests after the homepage. Crawl-delay can raise that wait, up to 10 seconds. A private or non-web address is refused before a request.
+2. Claude receives the text and returns JSON: summary, industry, services, quotes copied from the page, labeled inferences, pain points, opportunities, a short value note, and one angle. The prompt version is stored on the notes.
+3. A second Claude call writes one email in a chosen tone. The prompt asks for the company name and one detail that would be false for a different company. The sign-off is `SENDER_NAME`, or whatever is typed in the sidebar. The draft stores the same prompt version.
+4. The screen shows the notes, the draft, and a checklist against the page text. Nothing is mailed until the person ticks that they read the draft and presses Confirm. A local cap of 20 real sends in a day can refuse that confirm. Batch mode never reaches send.
 5. A successful, failed, or demo send is appended to `logs/outreach_log.json`. Opened, replied, and follow-up dates are fields you set by hand. A follow-up edit uses the row id written with that send.
 
 The screen calls `OutreachAgent.run_pipeline` (and `run_batch` for a list) and moves the progress bar from the callback. Demo mode is the same path with saved pages and saved drafts, so a reviewer can reach the confirm step without a key.
@@ -41,13 +41,17 @@ The screen calls `OutreachAgent.run_pipeline` (and `run_batch` for a list) and m
 
 **SMTP with an app password, not Gmail OAuth.** One person can set this up in a few minutes without a Google Cloud project. The cost is real: app passwords can be disabled by Google, there is no per-user consent screen, and this is a poor fit if more than one person ever sends. I would not keep this choice for a shared tool.
 
-**A JSON file instead of a database.** I can open the log and see exactly what was sent. New rows have an id, and the follow-up button on the send screen uses that id. The cost is still no locking: two processes can overwrite the file, and a row written before ids existed has an id only after the next edit.
+**A JSON file instead of a database.** I can open the log and see exactly what was sent. New rows have an id. The send screen, the log, and the follow-up list edit by that id. The cost is still no locking: two processes can overwrite the file. A row written before ids existed gets one the next time the log is read, and that id is written back.
 
 **Manual open and reply tracking.** A tracking pixel needs a public endpoint this app does not have, and it records someone opening mail they did not ask for. The log fields exist so I can mark what I actually know. The cost is that "opened" means I said it opened. The counts on the log screen are counts of my own marks, not engagement.
 
-**Requests first, Playwright second.** Most of the time a GET is enough, and the tests can run without a browser. Playwright is a fallback when the extracted text is under 100 characters. The cost is a second, heavier code path that still fails on login walls and aggressive bot checks.
+**Requests first, Playwright second.** Most of the time a GET is enough, and the tests can run without a browser. Playwright is a fallback when the extracted text is under 100 characters, and it sends the same User-Agent. The cost is a second, heavier code path that still fails on login walls and aggressive bot checks.
 
-**A pinned model id.** `claude-sonnet-4-5-20250929` is a constant in `src/models.py`. A silent SDK default would change the drafts without a diff. The cost is that the id will go stale when Anthropic retires that snapshot, and the app will fail until it is updated. There is no fallback model.
+**An identifiable client, and robots.txt.** The User-Agent names this tool. `robots.txt` can skip a page. The cost is less text from sites that only answer browsers, and a missing robots file does not block the scrape. A hostname is resolved before the request. If any answer is private, the fetch stops. An address that changes after that lookup can still be reached. See [ADR 0004](adr/0004-honest-scrape.md).
+
+**A pinned model id and a prompt version.** `claude-sonnet-4-5-20250929` is a constant in `src/models.py`. `PROMPT_VERSION` is a constant in `src/prompts.py`. A silent SDK default would change the drafts without a diff. The cost is that the model id will go stale when Anthropic retires that snapshot, and the app will fail until it is updated. There is no fallback model. Bumping the prompt version does not rescore the saved fixtures.
+
+**A local daily cap.** Twenty real sends per local day, counted from the log. The cost is that mail sent from another client is invisible, and the number is a choice rather than a measured limit. See [ADR 0005](adr/0005-daily-send-cap.md).
 
 **Character truncation, not a token budget.** Analysis keeps 15,000 characters of scraped text and each page keeps 5,000. That bounds cost and keeps one site from flooding the prompt. The cut is by character, so it can split a word, and it drops the rest of the site with no signal other than a truncation note.
 
@@ -62,17 +66,17 @@ The screen calls `OutreachAgent.run_pipeline` (and `run_batch` for a list) and m
 
 ## What it does not do well
 
-**Scraping is fragile.** Keyword matching on the URL and the link text will miss pages that use other words and will grab pages that merely contain "about" or "blog". Sites that render in the browser return a thin document until Playwright runs, and Playwright is optional. The scraper does not read `robots.txt`. The User-Agent string imitates Chrome so simple filters still return HTML. That gets more text back and it misrepresents the client.
+**Scraping is fragile.** Keyword matching on the URL and the link text will miss pages that use other words and will grab pages that merely contain "about" or "blog". Sites that render in the browser return a thin document until Playwright runs, and Playwright is optional. The client now identifies itself and reads `robots.txt`. Sites that only answer a browser user-agent will return less text. A hostname that resolves to a private address is refused. A name that changes its address after the lookup is not.
 
-**Model output varies, and some of it is invented.** The analysis prompt says to stay grounded, and it also says to make reasonable inferences when the page is thin. The UI labels the result "Prospect Analysis" with no confidence and no split between quoted page text and a guess. I have no scored set of drafts. A prompt change can make emails worse and the tests will still pass, because the tests check that JSON parsed, not that the email is specific or true.
+**Model output varies, and some of it is invented.** The prompt asks for a quote copied from the page and a separate inference. The screen shows those fields, and a thin page still gets a warning. The model can still put a paraphrase in the quote field. `make eval` scores the saved notes and the saved drafts. The review screen runs the same string checks on the draft being edited. A prompt change is visible because the version constant changes. The tests still do not call Claude, so they will not notice a live reply that is specific-looking and wrong.
 
-**Deliverability and spam.** This is cold email from a personal Gmail account over SMTP. Gmail's own spam filters, and the recipient's, will treat unexpected mail as spam. I do not control a separate sending domain, warmup, or bounce handling. Google's help page says a personal account can be blocked after more than 500 messages in a day, or a single message to more than 500 people ([Limits for sending and getting mail](https://support.google.com/mail/answer/22839)). That number is Google's, it can change, and looking like a blast can get an account limited sooner. The app itself enforces no daily cap.
+**Deliverability and spam.** This is cold email from a personal Gmail account over SMTP. Gmail's own spam filters, and the recipient's, will treat unexpected mail as spam. I do not control a separate sending domain, warmup, or bounce handling. Google's help page says a personal account can be blocked after more than 500 messages in a day, or a single message to more than 500 people ([Limits for sending and getting mail](https://support.google.com/mail/answer/22839)). That number is Google's, it can change, and looking like a blast can get an account limited sooner. This app stops at 20 real sends logged today on this machine. It does not ask Gmail, and it does not see mail sent from another client.
 
 **The first scraped address is not a person you chose.** Live mode lists addresses it found and leaves the To field blank. Demo mode fills in the sample `.example` address so the practice send can be clicked. The app still will not stop you from typing an address you should not use.
 
 **Gmail app passwords and SMTP limits.** Sending depends on an app password. Google can refuse that login method. SMTP retries are immediate, with no backoff, up to three tries. The log stores the subject and body of every attempt, including failures, in a local file that is not encrypted.
 
-**Follow-ups are a reminder list.** There is no mail-server clock. "Save Follow-Up" after a send writes the row with that send's id. Snooze and "mark replied" are local edits. The log screen still edits by position, which is the order on screen, so inserting a row above an open expander would point an older button at a different record until the next refresh.
+**Follow-ups are a reminder list.** There is no mail-server clock. "Save Follow-Up" after a send writes the row with that send's id. Snooze and "mark replied" are local edits. The log screen and the follow-up list edit by that id. A row that was saved before ids existed gets one the next time the log is read. Two processes can still overwrite the file.
 
 **English only.** The prompts and the scraper assume English pages and an English email.
 
@@ -89,7 +93,7 @@ If I use it, the bar is: a specific reason to write, my real name in the sign-of
 | Check | What it actually tells me |
 | --- | --- |
 | pytest, with Claude and SMTP mocked | Parsing, retries, log updates, and the pipeline's stop-at-draft behavior. It does not tell me a live draft is good. |
-| `make eval` on saved drafts | String checks from [DRAFT_RUBRIC.md](DRAFT_RUBRIC.md): a copied phrase, length, banned phrases, digits, the company name, and a clear ask. The counts are in [PRODUCT.md](PRODUCT.md). They are not a live model score and not a user metric. |
+| `make eval` on saved notes and drafts | String checks from [DRAFT_RUBRIC.md](DRAFT_RUBRIC.md), plus a check that saved quotes appear on the saved pages. The counts are in [PRODUCT.md](PRODUCT.md). They are not a live model score and not a user metric. The prompt version those checks were written against is in the same section. |
 | Ruff, Black, and mypy in GitHub Actions | Style, a few bug patterns, and type hints. Not product quality. |
 | Reading a draft before Confirm | Whether the email is specific and fair. The script does not block send. |
 
@@ -99,10 +103,10 @@ There is no labeled set of live sites and no record of draft quality over time. 
 
 In the order I would actually do them.
 
-1. **A small offline check on drafts.** `make eval` scores the saved demo drafts and 12 fictional pages with the rubric in `docs/DRAFT_RUBRIC.md`. That does not score a live Claude reply. A prompt change can still make live emails worse while those checks stay green.
-2. **Show uncertainty on thin pages.** Live mode no longer prefills the recipient. A page with very little text gets a warning that the notes are inferences. There is still no confidence score and no split between a quote and a guess.
-3. **Scrape more honestly.** Send an identifiable User-Agent, skip paths `robots.txt` disallows, and keep the page cap. I would rather get less text than pretend to be a browser. Same-site `www` links are followed now. The User-Agent is still a Chrome string.
-4. **A send cap in the app, then OAuth if anyone else sends.** Refuse to send once a small daily count is hit, well under the Gmail limit, and surface the count from the log. The app now refuses a recipient that is blank, a list, or split across lines, and it refuses to open SMTP when Gmail settings are missing. It still has no daily cap. Replace the app password with Gmail OAuth only if this stops being a single-person script.
-5. **Stable log rows.** New sends get a uuid, and the follow-up button uses it. SQLite would still be the right store if two processes ever wrote the file. A hosted database is not the point.
+1. **Offline checks, and a version on the live prompt.** `make eval` scores the saved notes, the saved demo drafts, and 12 fictional pages. The review screen runs the string checks on the draft being edited. A live Claude reply is still not scored by calling the model. The prompt version is `2026.11.1`. Changing the words without changing that constant is the remaining way to hide a prompt edit.
+2. **Quotes and guesses are separate.** The note has evidence and inference fields, and the screen labels them. A thin page still shows a warning. There is no numeric confidence. A model can still mislabel a paraphrase as a quote. The saved samples are checked. A live reply is not, except by reading it.
+3. **The scraper identifies itself.** The User-Agent is `AIOutreach/1.0`. `robots.txt` can skip a path. Crawl-delay is capped at 10 seconds. Private and non-web addresses are refused before a request, including a hostname whose lookup returns one. An address that changes after the lookup is still a gap.
+4. **A send cap, then OAuth if anyone else sends.** The app refuses a real send after 20 `sent` rows logged today. It does not ask Gmail. Replace the app password with Gmail OAuth only if this stops being a single-person script.
+5. **Stable log rows.** New sends get a uuid. The log screen and the follow-up list use it. A row without an id gets one the next time the log is read. SQLite would still be the right store if two processes ever wrote the file. A hosted database is not the point.
 
 I am not planning a public deployment, unsupervised sending, or a tracking pixel.

@@ -23,6 +23,7 @@ from src.models import (
     ScrapedWebsite,
     resolve_sender_name,
 )
+from src.prompts import SAVED_SAMPLE_VERSION
 from src.scraper import _extract_company_name, _extract_emails, _extract_text, _extract_title
 
 logger = logging.getLogger(__name__)
@@ -181,7 +182,8 @@ def demo_analysis(scraped: ScrapedWebsite) -> NeedAnalysis:
     """Return the saved notes for this sample. Does not call a model."""
     company = _require_company(scraped.base_url)
     logger.info("Demo mode: using saved notes for %s.", company.name)
-    return NeedAnalysis(**_load_json(company.directory / "analysis.json"))
+    notes = NeedAnalysis(**_load_json(company.directory / "analysis.json"))
+    return notes.model_copy(update={"prompt_version": SAVED_SAMPLE_VERSION, "model": ""})
 
 
 def demo_draft(analysis: NeedAnalysis, sender_name: str | None, tone: str) -> EmailDraft:
@@ -195,7 +197,13 @@ def demo_draft(analysis: NeedAnalysis, sender_name: str | None, tone: str) -> Em
     subject = str(chosen["subject"]).strip()
     body = str(chosen["body"]).replace("{{sender_name}}", resolve_sender_name(sender_name))
     logger.info("Demo mode: using saved %s draft for %s.", tone, company.name)
-    return EmailDraft(subject=subject, body=body, tone=tone if tone in drafts else "professional")
+    return EmailDraft(
+        subject=subject,
+        body=body,
+        tone=tone if tone in drafts else "professional",
+        prompt_version=SAVED_SAMPLE_VERSION,
+        model="",
+    )
 
 
 def demo_send(
@@ -219,6 +227,7 @@ def demo_send(
         email_body=draft.body,
         status="demo_sent",
         notes="Demo mode: saved on this machine. No email was sent.",
+        prompt_version=draft.prompt_version,
     )
     _log_outreach(record)
     logger.info("Demo send recorded locally for %s. No email was sent.", to_address)

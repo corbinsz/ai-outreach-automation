@@ -11,7 +11,7 @@ Two sets:
 - **Saved demo drafts.** Eight drafts: Northwind Analytics and Harbor & Pine Goods, four tones each. These are the drafts `make demo` shows. The page text is the saved HTML under `fixtures/demo`.
 - **Fixture drafts.** Twelve fictional company pages under `fixtures/eval`, one hand-written draft each. Some were written to miss a single check, so a perfect column would mean that check never fires. They are not model output.
 
-There is no live Claude score here. A prompt change can still make a live draft worse while this table stays put.
+There is no live Claude score here. A prompt change is recorded as `PROMPT_VERSION` in [PROMPT.md](PROMPT.md). The saved table stays put until the saved text changes. The review screen runs the checks below on the draft being edited, except the fact check: with no fixture phrase list, it looks for a 4-word phrase from the page that also appears in the draft. A failing check does not block confirm.
 
 ## The six checks
 
@@ -41,6 +41,10 @@ There is no live Claude score here. A prompt change can still make a live draft 
 5. **Names the company.** The draft must contain the company's first word of four or more letters. "Northwind Analytics" passes when the draft says "Northwind". "Harbor & Pine Goods" passes when it says "Harbor". The full legal name is not required. A draft can cite a real page fact and still fail this check.
 
 6. **Clear ask.** Some line of the body has a question mark and, on that same line, one of: chat, call, conversation, minute, meeting, session. Plurals count. "After-hours calls" on one line and "Is Tuesday open?" on another does not count. The question and the ask have to sit together.
+
+## Saved research notes
+
+Separate from the six draft checks. Northwind Analytics and Harbor & Pine Goods each have quotes copied from the HTML and at least one labeled inference. A quote that is not on the page fails. These notes are not model output. The counts are in [PRODUCT.md](PRODUCT.md).
 
 ## Confirm gate
 

@@ -11,7 +11,7 @@ The operator is one person with a short list. A sequence tool that sends on a ti
 
 ## Decision
 
-The pipeline stops at a draft. The Streamlit screen sends only after Confirm, to one address. Batch mode never calls send. There is no scheduler. `auto_send` exists on the agent for a scripted caller and the screen does not set it.
+The pipeline stops at a draft. The Streamlit screen shows a quality checklist, then sends only after a checkbox that the draft was read and Confirm, to one address. The checklist does not block Confirm. A local daily cap can refuse the send. That cap is [ADR 0005](0005-daily-send-cap.md). Batch mode never calls send. There is no scheduler. `auto_send` exists on the agent for a scripted caller and the screen does not set it.
 
 Demo mode keeps the same button, and the button writes a local log row instead of opening SMTP. That is [ADR 0003](0003-offline-demo-mode.md).
 

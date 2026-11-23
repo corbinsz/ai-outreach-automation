@@ -1,7 +1,7 @@
 {
   "professional": {
     "subject": "Wholesale orders in a spreadsheet",
-    "body": "Hi,\n\nThe wholesale page says wholesale orders are tracked in a spreadsheet, and shops still reorder by email. That works for the first few shops and gets brittle as the line grows.\n\nA short conversation could separate what should stay a personal note from what a shop could confirm without another thread.\n\nWorth a 15-minute chat?\n\n{{sender_name}}"
+    "body": "Hi,\n\nHarbor & Pine's wholesale page says wholesale orders are tracked in a spreadsheet, and shops still reorder by email. That works for the first few shops and gets brittle as the line grows.\n\nA short conversation could separate what should stay a personal note from what a shop could confirm without another thread.\n\nWorth a 15-minute chat?\n\n{{sender_name}}"
   },
   "conversational": {
     "subject": "Reorders without another email",
