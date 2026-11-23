@@ -56,11 +56,11 @@ Northwind Analytics and Harbor & Pine Goods, four tones each. These are the draf
 | Length within target | 8/8 |
 | No banned phrase | 8/8 |
 | No invented number | 8/8 |
-| Names the company | 6/8 |
+| Names the company | 8/8 |
 | Clear ask | 8/8 |
-| All six checks | 6/8 |
+| All six checks | 8/8 |
 
-Misses: Northwind Analytics / professional (Names the company); Harbor & Pine Goods / professional (Names the company).
+Every draft in this set passed all six checks.
 
 ### Fixture drafts (12)
 
@@ -156,7 +156,7 @@ In the order I would actually do them. Items already done are marked so this lis
 
 1. **Partly done.** `make eval` scores the saved notes, the demo drafts, and 12 fictional pages. The review screen runs the same string checks on the draft being edited. A live prompt change is recorded as `PROMPT_VERSION` in [PROMPT.md](PROMPT.md). The saved scores do not move until the saved text changes.
 2. **Done for the note shape.** Quotes and inferences are separate fields, and the screen labels them. There is still no numeric confidence, and a model can still put a paraphrase in the quote field. The eval catches that only for the saved samples.
-3. **Done for the honest client.** The User-Agent identifies this tool, `robots.txt` can disallow a page, and Crawl-delay is honored up to 10 seconds. A private or non-web address is refused before a request. A public name that resolves to a private address is not detected. See [ADR 0004](adr/0004-honest-scrape.md).
+3. **Done for the honest client.** The User-Agent identifies this tool, `robots.txt` can disallow a page, and Crawl-delay is honored up to 10 seconds. A private or non-web address is refused before a request, including a hostname that resolves to one. An address that changes after the lookup is still a gap. See [ADR 0004](adr/0004-honest-scrape.md).
 4. **Done for a local cap.** The app refuses a real send after 20 `sent` rows logged today. It does not ask Gmail, and it does not count practice rows. OAuth only if someone other than me sends. See [ADR 0005](adr/0005-daily-send-cap.md).
 5. **Partly done.** New rows have an id. The log and the follow-up list edit by that id. A row that was saved without an id gets one the next time the log is read. SQLite is still unnecessary while this is one person and one file.
 

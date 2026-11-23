@@ -13,6 +13,9 @@ This project is not published as a package. The log records changes that matter 
 - The scraper identifies itself as `AIOutreach/1.0`, skips paths `robots.txt` disallows, caps Crawl-delay at 10 seconds, and refuses private, loopback, and non-web addresses before a request. Redirects that leave the host are dropped.
 - A local cap of 20 real sends per day, counted from the log. Practice rows do not count. The cap refuses the send and does not open SMTP.
 - GitHub Actions runs `make eval` after the test suite.
+- `make demo` is the quickstart. The first run creates the virtualenv, then opens the app. No API key.
+- Hostnames are resolved before a fetch. A private, loopback, or link-local answer is refused. The tests stub DNS.
+- The two professional sample drafts name the company, so the demo checklist passes.
 - `make eval`: an offline rubric for saved drafts (fact citation, length, banned phrases, invented digits, company name, clear ask) on the demo drafts and 12 fictional company pages. The measured table is in `docs/PRODUCT.md`. The confirm-gate count is from the test-suite scenarios, not from users.
 - Demo mode: two saved companies, saved notes, and saved drafts. `make demo` runs the full review flow with no API key and no network. A practice confirm is stored locally and is not emailed.
 - `make setup` for a virtualenv, dev tools, and a `.env` copied from the example file.

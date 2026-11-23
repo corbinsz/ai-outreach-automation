@@ -47,7 +47,7 @@ The screen calls `OutreachAgent.run_pipeline` (and `run_batch` for a list) and m
 
 **Requests first, Playwright second.** Most of the time a GET is enough, and the tests can run without a browser. Playwright is a fallback when the extracted text is under 100 characters, and it sends the same User-Agent. The cost is a second, heavier code path that still fails on login walls and aggressive bot checks.
 
-**An identifiable client, and robots.txt.** The User-Agent names this tool. `robots.txt` can skip a page. The cost is less text from sites that only answer browsers, and a missing robots file does not block the scrape. A public name that resolves to a private address is not detected, because the check does not do a DNS lookup. See [ADR 0004](adr/0004-honest-scrape.md).
+**An identifiable client, and robots.txt.** The User-Agent names this tool. `robots.txt` can skip a page. The cost is less text from sites that only answer browsers, and a missing robots file does not block the scrape. A hostname is resolved before the request. If any answer is private, the fetch stops. An address that changes after that lookup can still be reached. See [ADR 0004](adr/0004-honest-scrape.md).
 
 **A pinned model id and a prompt version.** `claude-sonnet-4-5-20250929` is a constant in `src/models.py`. `PROMPT_VERSION` is a constant in `src/prompts.py`. A silent SDK default would change the drafts without a diff. The cost is that the model id will go stale when Anthropic retires that snapshot, and the app will fail until it is updated. There is no fallback model. Bumping the prompt version does not rescore the saved fixtures.
 
@@ -66,7 +66,7 @@ The screen calls `OutreachAgent.run_pipeline` (and `run_batch` for a list) and m
 
 ## What it does not do well
 
-**Scraping is fragile.** Keyword matching on the URL and the link text will miss pages that use other words and will grab pages that merely contain "about" or "blog". Sites that render in the browser return a thin document until Playwright runs, and Playwright is optional. The client now identifies itself and reads `robots.txt`. Sites that only answer a browser user-agent will return less text. A public hostname that points at a private address is still fetched, because the policy check does not resolve DNS.
+**Scraping is fragile.** Keyword matching on the URL and the link text will miss pages that use other words and will grab pages that merely contain "about" or "blog". Sites that render in the browser return a thin document until Playwright runs, and Playwright is optional. The client now identifies itself and reads `robots.txt`. Sites that only answer a browser user-agent will return less text. A hostname that resolves to a private address is refused. A name that changes its address after the lookup is not.
 
 **Model output varies, and some of it is invented.** The prompt asks for a quote copied from the page and a separate inference. The screen shows those fields, and a thin page still gets a warning. The model can still put a paraphrase in the quote field. `make eval` scores the saved notes and the saved drafts. The review screen runs the same string checks on the draft being edited. A prompt change is visible because the version constant changes. The tests still do not call Claude, so they will not notice a live reply that is specific-looking and wrong.
 
@@ -105,7 +105,7 @@ In the order I would actually do them.
 
 1. **Offline checks, and a version on the live prompt.** `make eval` scores the saved notes, the saved demo drafts, and 12 fictional pages. The review screen runs the string checks on the draft being edited. A live Claude reply is still not scored by calling the model. The prompt version is `2026.11.1`. Changing the words without changing that constant is the remaining way to hide a prompt edit.
 2. **Quotes and guesses are separate.** The note has evidence and inference fields, and the screen labels them. A thin page still shows a warning. There is no numeric confidence. A model can still mislabel a paraphrase as a quote. The saved samples are checked. A live reply is not, except by reading it.
-3. **The scraper identifies itself.** The User-Agent is `AIOutreach/1.0`. `robots.txt` can skip a path. Crawl-delay is capped at 10 seconds. Private and non-web addresses are refused before a request. A public name that resolves to a private address is not detected.
+3. **The scraper identifies itself.** The User-Agent is `AIOutreach/1.0`. `robots.txt` can skip a path. Crawl-delay is capped at 10 seconds. Private and non-web addresses are refused before a request, including a hostname whose lookup returns one. An address that changes after the lookup is still a gap.
 4. **A send cap, then OAuth if anyone else sends.** The app refuses a real send after 20 `sent` rows logged today. It does not ask Gmail. Replace the app password with Gmail OAuth only if this stops being a single-person script.
 5. **Stable log rows.** New sends get a uuid. The log screen and the follow-up list use it. A row without an id gets one the next time the log is read. SQLite would still be the right store if two processes ever wrote the file. A hosted database is not the point.
 

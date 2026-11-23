@@ -7,11 +7,10 @@ This is a personal spare-time project by Corbin Szenegeto. It is not a commercia
 Python 3.10 or newer.
 
 ```bash
-make setup
 make demo
 ```
 
-`make setup` creates `.venv`, installs the runtime and dev tools, and copies `.env.example` to `.env` when `.env` is missing. `make demo` starts Streamlit in demo mode at `http://127.0.0.1:8501`.
+`make demo` creates `.venv` on the first run, installs the runtime and dev tools, copies `.env.example` to `.env` when `.env` is missing, and starts Streamlit in demo mode at `http://127.0.0.1:8501`. `make setup` does the install without starting the app.
 
 Without make:
 

@@ -53,19 +53,20 @@ def _case(
     )
 
 
-def test_saved_demo_drafts_cite_the_page_and_two_do_not_name_the_company():
-    scores = {(item.company, item.tone): item for item in score_cases(load_demo_cases())}
+def test_saved_demo_drafts_cite_the_page_and_name_the_company():
+    cases = load_demo_cases()
+    scores = {(item.company, item.tone): item for item in score_cases(cases)}
     assert len(scores) == 8
-    for company in ("Northwind Analytics", "Harbor & Pine Goods"):
-        professional = scores[(company, "professional")]
-        assert professional.failed_labels == ("Names the company",)
-        assert professional.passed("fact_citation")
-        assert professional.passed("clear_ask")
-    named = [
-        scores[("Northwind Analytics", "bold")],
-        scores[("Harbor & Pine Goods", "consultative")],
-    ]
-    assert all(item.passed_all for item in named)
+    assert all(item.passed_all for item in scores.values())
+    for case in cases:
+        review = score_review(
+            company=case.company,
+            page_text=case.page_text,
+            subject=case.subject,
+            body=case.body,
+            tone=case.tone,
+        )
+        assert review.passed_all, (case.company, case.tone, review.failed_labels)
 
 
 def test_fixture_set_has_twelve_pages_and_every_check_can_fail():
@@ -85,7 +86,8 @@ def test_product_note_matches_the_eval_output():
     text = (ROOT / "docs" / "PRODUCT.md").read_text(encoding="utf-8")
     assert block in text
     assert "8 of 9" in block
-    assert "6/8" in block
+    assert "All six checks | 8/8" in block
+    assert "Every draft in this set passed all six checks." in block
     assert "5/12" in block
     assert PROMPT_VERSION in block
     assert "Saved research notes" in block

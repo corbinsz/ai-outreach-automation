@@ -1,8 +1,11 @@
 """Tests for the web scraping module."""
 
+import ipaddress
+import socket
 from unittest.mock import MagicMock, patch
 from urllib.robotparser import RobotFileParser
 
+import pytest
 from src.scraper import (
     DEFAULT_HEADERS,
     MAX_CONTENT_LENGTH,
@@ -18,8 +21,20 @@ from src.scraper import (
     _fetch_robots,
     _pause_seconds,
     classify_public_url,
+    resolution_block,
     scrape_website,
 )
+
+
+@pytest.fixture(autouse=True)
+def _offline_dns(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Hostnames resolve to a public address. Tests that need a private answer replace this."""
+
+    def _public(host: str, port: int | None, *args: object, **kwargs: object) -> list[tuple]:
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0))]
+
+    monkeypatch.setattr("src.scraper.socket.getaddrinfo", _public)
+
 
 # --- Sample HTML fixtures ---
 
@@ -358,6 +373,70 @@ class TestPublicUrl:
         assert result.pages == []
         assert "not a public website" in result.scrape_note
 
+    def test_literal_public_address_skips_dns(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        def _boom(host: str, port: int | None, *_args: object, **_kwargs: object) -> list[tuple]:
+            raise AssertionError(f"DNS was called for literal {host}")
+
+        monkeypatch.setattr("src.scraper.socket.getaddrinfo", _boom)
+        assert resolution_block("https://1.1.1.1/page") == ""
+
+    def test_name_that_resolves_private_is_not_fetched(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def _private(host: str, port: int | None, *_args: object, **_kwargs: object) -> list[tuple]:
+            assert host == "rebind.example"
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("169.254.169.254", 0))]
+
+        monkeypatch.setattr("src.scraper.socket.getaddrinfo", _private)
+
+        def _forbid(*_args: object, **_kwargs: object) -> None:
+            raise AssertionError("a private resolution was fetched")
+
+        with patch("requests.sessions.Session.request", _forbid):
+            result = scrape_website("https://rebind.example/admin", use_playwright_fallback=True)
+        assert result.pages == []
+        assert "169.254.169.254" in result.scrape_note
+
+    def test_one_private_answer_among_public_ones_is_refused(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def _mixed(host: str, port: int | None, *_args: object, **_kwargs: object) -> list[tuple]:
+            return [
+                (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0)),
+                (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.0.0.8", 0)),
+            ]
+
+        monkeypatch.setattr("src.scraper.socket.getaddrinfo", _mixed)
+        note = resolution_block("https://mixed.example")
+        assert "10.0.0.8" in note
+
+    def test_lookup_failure_is_not_fetched(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        def _missing(host: str, port: int | None, *_args: object, **_kwargs: object) -> list[tuple]:
+            raise socket.gaierror(8, "nodename nor servname provided")
+
+        monkeypatch.setattr("src.scraper.socket.getaddrinfo", _missing)
+
+        def _forbid(*_args: object, **_kwargs: object) -> None:
+            raise AssertionError("a failed lookup was fetched")
+
+        with patch("requests.sessions.Session.request", _forbid):
+            result = scrape_website("https://missing.example", use_playwright_fallback=True)
+        assert result.pages == []
+        assert "Could not look up missing.example" in result.scrape_note
+
+    def test_link_local_ipv6_answer_is_refused(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        def _local(host: str, port: int | None, *_args: object, **_kwargs: object) -> list[tuple]:
+            return [(socket.AF_INET6, socket.SOCK_STREAM, 6, "", ("fe80::1%eth0", 0, 0, 0))]
+
+        monkeypatch.setattr("src.scraper.socket.getaddrinfo", _local)
+        note = resolution_block("https://lan.example")
+        assert "fe80::1" in note
+        assert ipaddress.ip_address("fe80::1").is_link_local
+
+    def test_empty_lookup_is_refused(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("src.scraper.socket.getaddrinfo", lambda *_args, **_kwargs: [])
+        assert "Could not look up" in resolution_block("https://empty.example")
+
 
 class TestFetchGuards:
     def test_missing_content_type_still_accepts_html(self):
@@ -400,6 +479,21 @@ class TestFetchGuards:
         session.get.return_value = _html_response(
             status=302, location="http://169.254.169.254/latest"
         )
+        result = _fetch_page("https://acme.com", session)
+        assert result is None
+        session.get.assert_called_once()
+
+    def test_redirect_to_a_name_that_resolves_private_is_not_followed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def _lookup(host: str, port: int | None, *_args: object, **_kwargs: object) -> list[tuple]:
+            if host == "www.acme.com":
+                return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", 0))]
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0))]
+
+        monkeypatch.setattr("src.scraper.socket.getaddrinfo", _lookup)
+        session = MagicMock()
+        session.get.return_value = _html_response(status=302, location="https://www.acme.com/about")
         result = _fetch_page("https://acme.com", session)
         assert result is None
         session.get.assert_called_once()

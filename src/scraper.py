@@ -6,13 +6,15 @@ site painted its content with JavaScript. This is not a crawler: one site,
 a page cap, a pause between requests, and a robots.txt check.
 
 The client identifies itself. It does not pretend to be a browser. Private
-and non-web addresses are refused before a socket opens. Redirects are
-followed only when they stay on the same public host.
+and non-web addresses are refused before a socket opens, including a hostname
+that resolves to one. Redirects are followed only when they stay on the same
+public host.
 """
 
 import ipaddress
 import logging
 import re
+import socket
 import time
 from urllib.parse import urljoin, urlparse
 from urllib.robotparser import RobotFileParser
@@ -105,10 +107,8 @@ def _hostname(netloc: str) -> str:
 def classify_public_url(url: str) -> tuple[str, str]:
     """Return a normalized public http(s) URL, or an empty URL and the reason.
 
-    Hostnames are not resolved. A public name that later points at a private
-    address is not detected here. Literal private, loopback, and link-local
-    addresses are refused before a request, which is the case a pasted URL
-    can hit directly.
+    Literal private, loopback, and link-local addresses are refused here.
+    Hostnames are resolved separately by ``resolution_block`` before a request.
     """
     text = url.strip()
     if not text:
@@ -147,6 +147,65 @@ def classify_public_url(url: str) -> tuple[str, str]:
     return normalized, ""
 
 
+def _blocked_address(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    """True for addresses that are not a public website."""
+    return bool(
+        address.is_private
+        or address.is_loopback
+        or address.is_link_local
+        or address.is_multicast
+        or address.is_reserved
+        or address.is_unspecified
+    )
+
+
+def _addresses_for_host(host: str) -> list[ipaddress.IPv4Address | ipaddress.IPv6Address]:
+    """Resolve one hostname. Tests replace ``socket.getaddrinfo`` so DNS stays fake.
+
+    A zone index such as ``fe80::1%eth0`` is stripped before the address is parsed.
+    """
+    found: list[ipaddress.IPv4Address | ipaddress.IPv6Address] = []
+    for info in socket.getaddrinfo(host, None):
+        raw = info[4][0]
+        if not isinstance(raw, str) or not raw:
+            continue
+        found.append(ipaddress.ip_address(raw.split("%", 1)[0]))
+    return found
+
+
+def resolution_block(url: str) -> str:
+    """Return a refusal note, or an empty string when the host is public.
+
+    A hostname is refused when lookup fails or any answer is private, loopback,
+    or link-local. The check runs before the request. It cannot see an address
+    that changes after the lookup returns.
+    """
+    host = _hostname(urlparse(url).netloc)
+    if not host:
+        return "The URL has no host, so nothing was fetched."
+    try:
+        literal = ipaddress.ip_address(host)
+    except ValueError:
+        literal = None
+    if literal is not None:
+        if _blocked_address(literal):
+            return f"{host} is not a public website, so nothing was fetched."
+        return ""
+    try:
+        addresses = _addresses_for_host(host)
+    except socket.gaierror:
+        return f"Could not look up {host}, so nothing was fetched."
+    if not addresses:
+        return f"Could not look up {host}, so nothing was fetched."
+    for address in addresses:
+        if _blocked_address(address):
+            return (
+                f"{host} resolves to {address}, which is not a public address, "
+                "so nothing was fetched."
+            )
+    return ""
+
+
 def _same_site(left: str, right: str) -> bool:
     return _host_key(urlparse(left).netloc) == _host_key(urlparse(right).netloc)
 
@@ -175,6 +234,10 @@ def _fetch_page(url: str, session: requests.Session, hops: int = 0) -> str | Non
     """Fetch one page. Redirects stay on the same public host, up to a few hops."""
     if hops > _MAX_REDIRECTS:
         logger.warning(f"Too many redirects for {url}")
+        return None
+    blocked = resolution_block(url)
+    if blocked:
+        logger.warning(blocked)
         return None
     try:
         response = session.get(
@@ -513,6 +576,10 @@ def scrape_website(
         _log(rejected)
         return _empty_site(url.strip(), rejected)
     url = normalized
+    blocked = resolution_block(url)
+    if blocked:
+        _log(blocked)
+        return _empty_site(url, blocked)
 
     _log(f"Starting scrape of {url}")
 

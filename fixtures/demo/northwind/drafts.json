@@ -1,7 +1,7 @@
 {
   "professional": {
     "subject": "The Monday reporting pack",
-    "body": "Hi,\n\nThe services page says weekly client reports are still assembled in spreadsheets, and the homepage describes a Monday leadership pack copied out of three systems. That is a lot of manual work for a 12-person team.\n\nA short conversation could map which of those sources should refresh on a schedule, and which numbers need a single definition before anyone automates them.\n\nWorth a 15-minute chat?\n\n{{sender_name}}"
+    "body": "Hi,\n\nThe services page says weekly client reports are still assembled in spreadsheets, and the homepage describes a Monday leadership pack copied out of three systems. That is a lot of manual work for a 12-person team at Northwind Analytics.\n\nA short conversation could map which of those sources should refresh on a schedule, and which numbers need a single definition before anyone automates them.\n\nWorth a 15-minute chat?\n\n{{sender_name}}"
   },
   "conversational": {
     "subject": "Monday's pack, three systems",

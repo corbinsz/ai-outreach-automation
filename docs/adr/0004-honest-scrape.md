@@ -15,12 +15,12 @@ The User-Agent is `AIOutreach/1.0`, with a link to this repo. Playwright, when i
 
 `robots.txt` is fetched first. A disallow on the homepage returns an empty result and a note, and the page is not fetched. A disallow on a later path skips that path. Crawl-delay is honored and capped at 10 seconds so a huge value cannot stall a run. A missing or unreadable `robots.txt` does not block the scrape. The log says so.
 
-Before any request, the URL has to be http or https, with no username or password, and the host cannot be a literal private, loopback, or link-local address, or a name like `localhost`. Redirects are followed only when they stay on the same public host. A redirect to another host or to a private address is dropped.
+Before any request, the URL has to be http or https, with no username or password, and the host cannot be a literal private, loopback, or link-local address, or a name like `localhost`. A hostname is resolved first. If lookup fails, or any answer is private, loopback, or link-local, nothing is fetched. Redirects are followed only when they stay on the same public host, and the redirect target is resolved the same way. A redirect to another host or to a private address is dropped.
 
 ## Consequences
 
 Some sites will return less text, or nothing. That is the tradeoff. The page cap and the pause between requests stay.
 
-A public hostname that later resolves to a private address is not detected. DNS is not consulted at the policy check, so the tests stay offline. Login walls and JavaScript-only pages are still fragile. Playwright remains optional.
+The lookup and the connection are two moments. An address that changes after `getaddrinfo` returns can still be reached. The tests stub `getaddrinfo`, so they never query a resolver. Login walls and JavaScript-only pages are still fragile. Playwright remains optional.
 
 Demo mode does not fetch, so this policy does not apply to the saved samples.
